@@ -10,14 +10,17 @@
 .set DISPLAY_MAX, 8192
 .set ENC_LATIN1,  0x0201
 .set RGB_COLORS,  32768
+.set GUIDE_MAX,   64
+.set GUIDE_SCAN,  5000           // lines looked at above the first visible one
 
 // drawRect locals
 .set L_Y0,     160
-.set L_YBOT,   168
+.set L_LINEH,  168
 .set L_LS,     176
 .set L_LE,     184
 .set L_CA,     192
-.set L_LAST,   200
+.set L_ROW,    200
+.set L_RSTART, 208
 .set L_NUMEND, 240
 .set L_TXT,    256
 .set L_TXTLEN, 264
@@ -27,7 +30,12 @@
 .set L_COL,    296
 .set L_HLP,    304
 .set L_HLRGBA, 320
-.set DRAW_FRAME, 352
+.set L_CURON,  352
+.set L_CURX,   360
+.set L_CURY,   368
+.set L_REND,   376             // run end byte, run slot
+.set L_PEND,   392             // piece end byte, its column
+.set DRAW_FRAME, 416
 
     CLASSREF NSGraphicsContext
     SELDEF currentContext, "currentContext"
@@ -48,6 +56,13 @@ Lfont_warn:
     .zerofill __DATA,__bss,_av_attrs,(T_SLOTS * 8),3
     // terminal colors outside the theme, by rgb555, created on first use
     .zerofill __DATA,__bss,_av_rgb_attrs,(RGB_COLORS * 8),3
+    // wrap width and row starts of the line being drawn
+    .zerofill __DATA,__bss,_av_rwrap,8,3
+    .zerofill __DATA,__bss,_av_rstarts,(WRAP_MAX * 8),3
+    // indent guides: columns of the enclosing blocks of the line being drawn
+    .zerofill __DATA,__bss,_av_gstack,(GUIDE_MAX * 8),3
+    .zerofill __DATA,__bss,_av_gdepth,8,3
+    .zerofill __DATA,__bss,_av_rctx,8,3
     .globl _av_attrs
     .globl _av_font
     .globl _av_line_h
@@ -298,9 +313,355 @@ FUNC_BEGIN _av_render_text_x
     ldp x29, x30, [sp], #16
     ret
 
+// size_t av_render_wrap(View *v, double width): wrap width in columns for a view this wide,
+// 0 when wrapping is off; also stored in the view for cursor motion
+FUNC_BEGIN _av_render_wrap
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x19, [sp, #16]
+    str d8, [sp, #24]
+    mov x19, x0
+    fmov d8, d0
+    mov x0, #0
+    LDRG x9, _av_cfg_wrap
+    cbz x9, 1f
+    ldr x0, [x19, #V_DOC]
+    bl _av_render_text_x
+    fsub d0, d8, d0
+    fmov d1, #6.0
+    fsub d0, d0, d1
+    LDRD d1, _av_adv
+    fdiv d0, d0, d1
+    fcvtzs x0, d0
+    mov x9, #8
+    cmp x0, x9
+    csel x0, x9, x0, lt
+1:  str x0, [x19, #V_WRAP]
+    ldr d8, [sp, #24]
+    ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// rows of line x23 into x28, row starts in av_rstarts; drawRect helper
+    .p2align 2
+Lline_rows:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    mov x0, x22
+    mov x1, x23
+    LDRG x2, _av_rwrap
+    LADDR x3, _av_rstarts
+    mov x4, #WRAP_MAX
+    bl _av_wrap_rows
+    mov x28, x0
+    ldp x29, x30, [sp], #16
+    ret
+
+// (start col, end col) row_cols(size_t r): columns of row r of the current line, end exclusive
+// (huge for the last row); drawRect helper, reads x28
+    .p2align 2
+Lrow_cols:
+    LADDR x9, _av_rstarts
+    ldr x10, [x9, x0, lsl #3]
+    mov x11, #0x7fffffffffffffff
+    add x12, x0, #1
+    cmp x12, x28
+    b.hs 1f
+    cmp x12, #WRAP_MAX
+    b.hs 1f
+    ldr x11, [x9, x12, lsl #3]
+1:  mov x0, x10
+    mov x1, x11
+    ret
+
+// void fill_cols(size_t a, size_t b, const double *rgba): columns [a, b) of the current line,
+// one rect per visual row; reads the drawRect registers x21 x28 d10..d14
+    .p2align 2
+Lfill_cols:
+    stp x29, x30, [sp, #-64]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x23, x24, [sp, #32]
+    str x25, [sp, #48]
+    mov x19, x0
+    mov x20, x1
+    mov x23, x2
+    mov x24, #0
+1:  cmp x24, x28
+    b.hs 9f
+    cmp x24, #WRAP_MAX
+    b.hs 9f
+    mov x0, x24
+    bl Lrow_cols
+    mov x25, x0
+    cmp x19, x0
+    csel x2, x19, x0, hi
+    cmp x20, x1
+    csel x3, x20, x1, lo
+    cmp x2, x3
+    b.hs 2f
+    sub x4, x3, x2
+    ucvtf d2, x4
+    fmul d2, d2, d14
+    sub x4, x2, x25
+    ucvtf d0, x4
+    fmul d0, d0, d14
+    fadd d0, d0, d12
+    fsub d0, d0, d13
+    add x4, x24, #1
+    ucvtf d1, x4
+    fmul d1, d1, d10
+    fsub d1, d11, d1
+    fmov d3, d10
+    mov x0, x21
+    mov x1, x23
+    bl _av_fill
+2:  add x24, x24, #1
+    b 1b
+9:  ldr x25, [sp, #48]
+    ldp x23, x24, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #64
+    ret
+
+// long indent(size_t line): columns of leading blanks, -1 for a blank line; reads x22
+    .p2align 2
+Lindent:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    mov x19, x0
+    mov x0, x22
+    mov x1, x19
+    bl _av_buf_line_end
+    mov x20, x0
+    mov x0, x22
+    mov x1, x19
+    bl _av_buf_line_start
+    mov x2, x0
+    mov x3, #0
+    BUF_GEOM x22
+1:  cmp x2, x20
+    b.hs 4f
+    BUF_BYTE w4, x2
+    cmp w4, #' '
+    b.eq 2f
+    cmp w4, #9
+    b.eq 3f
+    cmp w4, #13
+    b.eq 4f
+    mov x0, x3
+    b 9f
+2:  add x3, x3, #1
+    add x2, x2, #1
+    b 1b
+3:  LDRG x14, _av_tab_width
+    udiv x15, x3, x14
+    madd x3, x15, x14, x14
+    add x2, x2, #1
+    b 1b
+4:  mov x0, #-1
+9:  ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// void guides_init(void): enclosing block columns of the first visible line x23, found by
+// walking up to the nearest less indented lines
+    .p2align 2
+Lguides_init:
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x24, [sp, #32]
+    STRG xzr, _av_gdepth, x9
+    LDRG x9, _av_cfg_guides
+    cbz x9, 9f
+    mov x0, x23
+    bl Lindent
+    mov x20, x0
+    cmp x20, #0
+    mov x9, #0x7fffffff
+    csel x20, x9, x20, lt
+    // collected outer to inner at the top of the stack array, then moved down
+    mov x21, #GUIDE_MAX
+    mov x19, x23
+    mov x24, #GUIDE_SCAN
+1:  cbz x19, 3f
+    cbz x24, 3f
+    cbz x20, 3f
+    cbz x21, 3f
+    sub x19, x19, #1
+    sub x24, x24, #1
+    mov x0, x19
+    bl Lindent
+    tbnz x0, #63, 1b
+    cmp x0, x20
+    b.hs 1b
+    mov x20, x0
+    sub x21, x21, #1
+    LADDR x9, _av_gstack
+    str x0, [x9, x21, lsl #3]
+    b 1b
+3:  mov x9, #GUIDE_MAX
+    sub x2, x9, x21
+    STRG x2, _av_gdepth, x9
+    LADDR x0, _av_gstack
+    add x1, x0, x21, lsl #3
+    lsl x2, x2, #3
+    bl _memmove
+9:  ldp x21, x24, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
+
+// void guides_line(void): guides of line x23 over its first row, then it opens a block itself;
+// a blank line keeps the guides of the line above it, minus that line's own level
+    .p2align 2
+Lguides_line:
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    str x21, [sp, #32]
+    LDRG x9, _av_cfg_guides
+    cbz x9, 9f
+    mov x0, x23
+    bl Lindent
+    mov x19, x0
+    LDRG x20, _av_gdepth
+    LADDR x9, _av_gstack
+    tbnz x19, #63, 2f
+1:  cbz x20, 3f
+    sub x10, x20, #1
+    ldr x11, [x9, x10, lsl #3]
+    cmp x11, x19
+    b.lt 3f
+    mov x20, x10
+    b 1b
+2:  subs x21, x20, #1
+    csel x21, xzr, x21, lo
+    b 4f
+3:  mov x21, x20
+4:  STRG x20, _av_gdepth, x10
+    mov x10, #0
+5:  cmp x10, x21
+    b.hs 6f
+    str x10, [sp, #40]
+    LADDR x9, _av_gstack
+    ldr x11, [x9, x10, lsl #3]
+    ucvtf d0, x11
+    fmul d0, d0, d14
+    fadd d0, d0, d12
+    fsub d0, d0, d13
+    fmov d1, #2.0
+    fadd d0, d0, d1
+    fcmp d0, d12
+    b.lt 51f
+    fsub d1, d11, d10
+    fmov d2, #1.0
+    fmov d3, d10
+    LDRG x0, _av_rctx
+    LADDR x1, _av_theme
+    add x1, x1, #T_INDENT
+    bl _av_fill
+51: ldr x10, [sp, #40]
+    add x10, x10, #1
+    b 5b
+6:  tbnz x19, #63, 9f
+    LDRG x20, _av_gdepth
+    cmp x20, #GUIDE_MAX
+    b.hs 9f
+    LADDR x9, _av_gstack
+    str x19, [x9, x20, lsl #3]
+    add x20, x20, #1
+    STRG x20, _av_gdepth, x9
+9:  ldr x21, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
+
+// void error_line(size_t line_end): squiggle under the first row of line x23 and the message
+// after its last row, in the error color
+    .p2align 2
+Lerror_line:
+    stp x29, x30, [sp, #-64]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp d8, d9, [sp, #32]
+    str d10, [sp, #48]
+    mov x1, x0
+    mov x0, x22
+    bl _av_col_of
+    mov x19, x0
+    mov x0, #0
+    bl Lrow_cols
+    cmp x19, x1
+    csel x9, x19, x1, lo
+    mov x10, #1
+    cmp x9, x10
+    csel x9, x10, x9, lo
+    ucvtf d8, x9
+    fmul d8, d8, d14
+    fadd d8, d8, d12
+    fsub d8, d8, d13
+    fsub d9, d12, d13
+    fsub d10, d11, d10
+    fmov d0, #1.0
+    fadd d10, d10, d0
+    mov x20, #0
+1:  fcmp d9, d8
+    b.ge 2f
+    fmov d0, d9
+    and x9, x20, #1
+    ucvtf d1, x9
+    fadd d1, d1, d10
+    fmov d2, #2.0
+    fmov d3, #1.0
+    LDRG x0, _av_rctx
+    LADDR x1, _av_theme
+    add x1, x1, #T_ERROR
+    bl _av_fill
+    fmov d0, #2.0
+    fadd d9, d9, d0
+    add x20, x20, #1
+    b 1b
+    // message: three columns after the end of the last row
+2:  sub x0, x28, #1
+    mov x9, #(WRAP_MAX - 1)
+    cmp x0, x9
+    csel x0, x9, x0, hi
+    bl Lrow_cols
+    sub x9, x19, x0
+    add x9, x9, #3
+    ucvtf d8, x9
+    fmul d8, d8, d14
+    fadd d8, d8, d12
+    fsub d8, d8, d13
+    ldr x0, [x22, #DOC_ERR]
+    bl _av_yaml_error_msg
+    mov x19, x0
+    bl _strlen
+    mov x2, x0
+    mov x1, x19
+    LDRG x0, _av_rctx
+    ATTRS x3, T_ERROR
+    fmov d0, d8
+    ucvtf d1, x28
+    LDRD d2, _av_line_h
+    fmul d1, d1, d2
+    fsub d1, d11, d1
+    LDRD d2, _av_base_off
+    fadd d1, d1, d2
+    bl _av_draw_text
+    ldr d10, [sp, #48]
+    ldp d8, d9, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #64
+    ret
+
 // void drawRect:(NSRect)dirty, IMP of AvEditorView
+// lines wrap into visual rows; the scroll offset is a line index plus a fraction of its rows
 // x19 self, x20 view, x21 ctx, x22 doc, x23 line, x24 nlines, x25 cursor line
-// x26/x27 selection, x28 first visible line; d8 W, d9 H, d10 line h, d11 row top
+// x26/x27 selection, x28 rows of the line; d8 W, d9 H, d10 line h, d11 line top
 // d12 text x, d13 scroll x, d14 advance, d15 gutter width
 FUNC_BEGIN _av_render_draw
     stp x29, x30, [sp, #-DRAW_FRAME]!
@@ -322,6 +683,7 @@ FUNC_BEGIN _av_render_draw
     MSG currentContext
     MSG CGContext
     mov x21, x0
+    STRG x0, _av_rctx, x9
     LGOT x1, _CGAffineTransformIdentity
     bl _CGContextSetTextMatrix
     mov x0, x19
@@ -361,32 +723,49 @@ FUNC_BEGIN _av_render_draw
     fmov d15, d0
     fmov d1, #10.0
     fadd d12, d0, d1
-    ldr d13, [x20, #V_SCROLLX]
+    // wrapped lines never scroll sideways
+    mov x0, x20
+    fmov d0, d8
+    bl _av_render_wrap
+    STRG x0, _av_rwrap, x9
+    cbz x0, 1f
+    str xzr, [x20, #V_SCROLLX]
+1:  ldr d13, [x20, #V_SCROLLX]
 
-    // first visible line and its top edge (view is not flipped, y grows up)
+    // first line and its top edge: the fraction of the offset scrolls through its rows
     ldr d0, [x20, #V_SCROLLY]
     fdiv d1, d0, d10
-    frintm d1, d1
-    fcvtzu x23, d1
-    fmul d2, d1, d10
-    fsub d2, d0, d2
-    fadd d11, d9, d2
-    str d11, [sp, #L_Y0]
-    mov x28, x23
+    frintm d2, d1
+    fcvtzu x23, d2
+    fsub d1, d1, d2
+    str d1, [sp, #L_Y0]
+    sub x9, x24, #1
+    cmp x23, x9
+    csel x23, x9, x23, hi
+    bl Lline_rows
+    ucvtf d0, x28
+    fmul d0, d0, d10
+    ldr d1, [sp, #L_Y0]
+    fmul d0, d0, d1
+    fadd d11, d9, d0
 
     mov x0, x22
     ldr x1, [x20, #V_CUR]
     bl _av_buf_line_of
     mov x25, x0
     SEL_RANGE x20, x26, x27
+    str xzr, [sp, #L_CURON]
+    bl Lguides_init
 
 Lrow:
     cmp x23, x24
     b.hs Lrows_end
     fcmp d11, #0.0
     b.le Lrows_end
-    fsub d0, d11, d10
-    str d0, [sp, #L_YBOT]
+    bl Lline_rows
+    ucvtf d0, x28
+    fmul d0, d0, d10
+    str d0, [sp, #L_LINEH]
 
     cmp x23, x25
     b.ne 1f
@@ -394,12 +773,13 @@ Lrow:
     LADDR x1, _av_theme
     add x1, x1, #T_CURLINE
     fmov d0, d15
-    ldr d1, [sp, #L_YBOT]
+    ldr d3, [sp, #L_LINEH]
+    fsub d1, d11, d3
     fsub d2, d8, d15
-    fmov d3, d10
     bl _av_fill
 
-1:  mov x0, x22
+1:  bl Lguides_line
+    mov x0, x22
     mov x1, x23
     bl _av_buf_line_start
     str x0, [sp, #L_LS]
@@ -428,22 +808,11 @@ Lrow:
     bl _av_col_of
     ldr x10, [sp, #L_LE]
     cmp x27, x10
-    cinc x0, x0, hi
-    ldr x9, [sp, #L_CA]
-    subs x1, x0, x9
-    b.ls 2f
-    ucvtf d2, x1
-    fmul d2, d2, d14
-    ucvtf d0, x9
-    fmul d0, d0, d14
-    fadd d0, d0, d12
-    fsub d0, d0, d13
-    ldr d1, [sp, #L_YBOT]
-    fmov d3, d10
-    mov x0, x21
-    LADDR x1, _av_theme
-    add x1, x1, #T_SEL
-    bl _av_fill
+    cinc x1, x0, hi
+    ldr x0, [sp, #L_CA]
+    LADDR x2, _av_theme
+    add x2, x2, #T_SEL
+    bl Lfill_cols
 
     // find bar matches on this line, under the text
 2:  LDRG x9, _av_find_hl
@@ -468,22 +837,13 @@ Lrow:
     mov x0, x22
     ldr x1, [sp, #L_HLP]
     bl _av_col_of
-    ldr x9, [sp, #L_CA]
-    sub x1, x0, x9
-    ucvtf d2, x1
-    fmul d2, d2, d14
-    ucvtf d0, x9
-    fmul d0, d0, d14
-    fadd d0, d0, d12
-    fsub d0, d0, d13
-    ldr d1, [sp, #L_YBOT]
-    fmov d3, d10
-    mov x0, x21
-    add x1, sp, #L_HLRGBA
-    bl _av_fill
+    mov x1, x0
+    ldr x0, [sp, #L_CA]
+    add x2, sp, #L_HLRGBA
+    bl Lfill_cols
     b 21b
 
-    // text: lex the expanded line, draw each color run at its column
+    // text: lex the expanded line, draw each color run, cut at row ends
 29: mov x0, x22
     ldp x1, x2, [sp, #L_LS]
     bl Lexpand
@@ -512,55 +872,123 @@ Lrun:
     ldrh w14, [x11, #RUN_SLOT]
     add x10, x10, #1
     str x10, [sp, #L_RUN]
+    add x13, x12, x13
+    stp x13, x14, [sp, #L_REND]
     // advance the column over the bytes before this run (UTF-8 lead bytes only)
     ldp x15, x16, [sp, #L_BYTE]
     ldr x17, [sp, #L_TXT]
 4:  cmp x15, x12
-    b.hs 5f
+    b.hs Lpiece
     ldrb w0, [x17, x15]
     add x15, x15, #1
     and w0, w0, #0xc0
     cmp w0, #0x80
     cinc x16, x16, ne
     b 4b
-5:  stp x15, x16, [sp, #L_BYTE]
-    ucvtf d0, x16
+    // one piece per visual row the run touches: x15 byte, x16 column
+Lpiece:
+    stp x15, x16, [sp, #L_BYTE]
+    ldr x9, [sp, #L_REND]
+    cmp x15, x9
+    b.hs Lrun
+    LADDR x0, _av_rstarts
+    mov x1, x28
+    mov x2, x16
+    bl _av_wrap_row_of
+    str x0, [sp, #L_ROW]
+    bl Lrow_cols
+    str x0, [sp, #L_RSTART]
+    // bytes up to the row end or the run end
+    ldp x15, x16, [sp, #L_BYTE]
+    ldr x9, [sp, #L_REND]
+    ldr x17, [sp, #L_TXT]
+    mov x2, x15
+    mov x3, x16
+5:  cmp x2, x9
+    b.hs 6f
+    ldrb w4, [x17, x2]
+    and w4, w4, #0xc0
+    cmp w4, #0x80
+    b.eq 51f
+    cmp x3, x1
+    b.hs 6f
+    add x3, x3, #1
+51: add x2, x2, #1
+    b 5b
+6:  stp x2, x3, [sp, #L_PEND]
+    ldr x4, [sp, #L_RSTART]
+    sub x4, x16, x4
+    ucvtf d0, x4
     fmul d0, d0, d14
     fadd d0, d0, d12
     fsub d0, d0, d13
+    // unwrapped: nothing more to see past the right edge
+    LDRG x9, _av_rwrap
+    cbnz x9, 7f
     fcmp d0, d8
     b.ge 3f
-    mov x0, x21
-    add x1, x17, x12
-    mov x2, x13
-    LADDR x3, _av_attrs
-    ldr x3, [x3, x14, lsl #3]
-    ldr d1, [sp, #L_YBOT]
+7:  ldr x9, [sp, #L_ROW]
+    add x9, x9, #1
+    ucvtf d1, x9
+    fmul d1, d1, d10
+    fsub d1, d11, d1
     LDRD d2, _av_base_off
     fadd d1, d1, d2
-    bl _av_draw_text
-    b Lrun
-3:  add x23, x23, #1
-    fsub d11, d11, d10
-    b Lrow
-
-Lrows_end:
-    str x23, [sp, #L_LAST]
-    // gutter drawn after text so horizontally scrolled text slides under it
     mov x0, x21
+    add x1, x17, x15
+    sub x2, x2, x15
+    ldr x14, [sp, #(L_REND + 8)]
+    LADDR x3, _av_attrs
+    ldr x3, [x3, x14, lsl #3]
+    bl _av_draw_text
+    ldp x15, x16, [sp, #L_PEND]
+    // a piece that stopped at a row end continues on the next row
+    b Lpiece
+
+    // YAML error on this line: squiggle under the first row, message after the last one
+3:  ldr x9, [x22, #DOC_ERR_LINE]
+    sub x9, x9, #1
+    cmp x9, x23
+    b.ne 39f
+    ldr x0, [sp, #L_LE]
+    bl Lerror_line
+
+    // cursor position, then the gutter strip and the number of this line
+39: cmp x23, x25
+    b.ne 31f
+    mov x0, x22
+    ldr x1, [x20, #V_CUR]
+    bl _av_col_of
+    str x0, [sp, #L_CA]
+    mov x2, x0
+    LADDR x0, _av_rstarts
+    mov x1, x28
+    bl _av_wrap_row_of
+    str x0, [sp, #L_ROW]
+    bl Lrow_cols
+    ldr x9, [sp, #L_CA]
+    sub x9, x9, x0
+    ucvtf d0, x9
+    fmul d0, d0, d14
+    fadd d0, d0, d12
+    fsub d0, d0, d13
+    str d0, [sp, #L_CURX]
+    ldr x9, [sp, #L_ROW]
+    add x9, x9, #1
+    ucvtf d1, x9
+    fmul d1, d1, d10
+    fsub d1, d11, d1
+    str d1, [sp, #L_CURY]
+    mov x9, #1
+    str x9, [sp, #L_CURON]
+31: mov x0, x21
     LADDR x1, _av_theme
     add x1, x1, #T_GUTTER
     movi d0, #0
-    movi d1, #0
+    ldr d3, [sp, #L_LINEH]
+    fsub d1, d11, d3
     fmov d2, d15
-    fmov d3, d9
     bl _av_fill
-    ldr d11, [sp, #L_Y0]
-    mov x23, x28
-Lnum:
-    ldr x9, [sp, #L_LAST]
-    cmp x23, x9
-    b.hs Lnum_end
     add x0, x23, #1
     add x1, sp, #L_NUMEND
     bl Litoa
@@ -574,41 +1002,44 @@ Lnum:
     fadd d1, d1, d2
     ATTRS x3, T_LINENR
     cmp x23, x25
-    b.ne 4f
+    b.ne 32f
     ATTRS x3, T_LINENR_CUR
-4:  mov x2, x1
+32: ldr x9, [x22, #DOC_ERR_LINE]
+    sub x9, x9, #1
+    cmp x9, x23
+    b.ne 33f
+    ATTRS x3, T_ERROR
+33: mov x2, x1
     mov x1, x0
     mov x0, x21
     bl _av_draw_text
+    ldr d0, [sp, #L_LINEH]
+    fsub d11, d11, d0
     add x23, x23, #1
-    fsub d11, d11, d10
-    b Lnum
+    b Lrow
 
-Lnum_end:
+Lrows_end:
+    // gutter below the last line
+    fcmp d11, #0.0
+    b.le 1f
+    mov x0, x21
+    LADDR x1, _av_theme
+    add x1, x1, #T_GUTTER
+    movi d0, #0
+    movi d1, #0
+    fmov d2, d15
+    fmov d3, d11
+    bl _av_fill
     // only the focused pane shows its cursor
-    LDRG x9, _av_focus_view
+1:  LDRG x9, _av_focus_view
     cmp x9, x19
     b.ne Lout
-    cmp x25, x28
-    b.lo Lout
-    ldr x9, [sp, #L_LAST]
-    cmp x25, x9
-    b.hs Lout
-    mov x0, x22
-    ldr x1, [x20, #V_CUR]
-    bl _av_col_of
-    ucvtf d0, x0
-    fmul d0, d0, d14
-    fadd d0, d0, d12
-    fsub d0, d0, d13
+    ldr x9, [sp, #L_CURON]
+    cbz x9, Lout
+    ldr d0, [sp, #L_CURX]
     fcmp d0, d15
     b.lt Lout
-    sub x9, x25, x28
-    add x9, x9, #1
-    ucvtf d1, x9
-    fmul d1, d1, d10
-    ldr d2, [sp, #L_Y0]
-    fsub d1, d2, d1
+    ldr d1, [sp, #L_CURY]
     fmov d4, #2.0
     fadd d1, d1, d4
     fmov d2, #2.0

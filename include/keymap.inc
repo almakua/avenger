@@ -33,7 +33,9 @@
 .set A_REPLACE,     37
 .set A_FIND_NEXT,   38
 .set A_FIND_PREV,   39
-.set A_COUNT,       40
+.set A_TOGGLE_WRAP, 40
+.set A_OUTLINE,     41
+.set A_COUNT,       42
 
 // key binding after the prefix: [mods u32][codepoint u32][action u32][pad]
 .set KM_MODS,   0

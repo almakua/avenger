@@ -890,6 +890,8 @@ FUNC_BEGIN _av_tab_open
     b 3f
 2:  bl _av_doc_init
 3:  mov x0, x20
+    bl _av_lint_touch
+    mov x0, x20
     bl _av_editor_create
     mov x21, x0
     bl _av_editor_state
@@ -1210,6 +1212,8 @@ Lsave_leaf:
     str x21, [x20, #DOC_PATH]
     mov x0, x20
     bl _av_hl_detect
+    mov x0, x20
+    bl _av_lint_touch
 1:  mov x0, x20
     mov x1, x21
     bl _av_buf_save
@@ -1891,6 +1895,21 @@ Lresize:
     ldp x29, x30, [sp], #32
     ret
 
+// void reveal_if_editor(NSView *v): keeps the cursor in view after the layout changed
+    .p2align 2
+Lreveal_if_editor:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x19, [sp, #16]
+    mov x19, x0
+    bl _av_tabs_current_doc
+    cbz x0, 1f
+    mov x0, x19
+    bl _av_editor_reveal
+1:  ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
 // void av_action(size_t id)
 FUNC_BEGIN _av_action
     stp x29, x30, [sp, #-32]!
@@ -1935,6 +1954,8 @@ La_table:
     b La_replace
     b La_find_next
     b La_find_prev
+    b La_wrap
+    b La_outline
 La_new:
     mov x0, #0
     bl _av_tab_open
@@ -2045,6 +2066,19 @@ La_find_next:
 La_find_prev:
     mov x0, #1
     bl _av_find_step
+    b La_out
+    // until the next config reload
+La_wrap:
+    LDRG x9, _av_cfg_wrap
+    eor x9, x9, #1
+    STRG x9, _av_cfg_wrap, x10
+    bl _av_tabs_layout
+    bl _av_tabs_current_view
+    cbz x0, La_out
+    bl Lreveal_if_editor
+    b La_out
+La_outline:
+    bl _av_palette_outline
 La_out:
     ldr x19, [sp, #16]
     ldp x29, x30, [sp], #32

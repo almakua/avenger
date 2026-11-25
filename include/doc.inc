@@ -11,7 +11,13 @@
 .set DOC_HL_CAP,    120
 .set DOC_HL_VALID,  128 // states[0..valid] are up to date
 .set DOC_VIEWS,  136    // list of Views showing this doc, linked by V_NEXT
-.set DOC_SIZE,   160
+.set DOC_GEN,    144    // bumped by every change
+.set DOC_LINT_GEN, 152  // generation last validated
+.set DOC_ARM_GEN,  160  // generation when the validation timer was armed
+.set DOC_LINTING,  168  // a timer or a background check is pending
+.set DOC_ERR_LINE, 176  // 1-based line of the YAML error, 0 when valid
+.set DOC_ERR,      184  // YE_* code
+.set DOC_SIZE,   192
 
 // undo record: [type u32][flags u32][pos u64][len u64][text][size u64]
 // trailing size lets undo walk records backwards, fields may be unaligned
@@ -37,7 +43,11 @@
 .set V_PREFCOL, 40
 .set V_NSVIEW,  48
 .set V_NEXT,    56
-.set V_SIZE,    64
+.set V_WRAP,    64     // wrap width in columns, 0 when lines do not wrap
+.set V_SIZE,    80
+
+// rows kept per wrapped line by av_wrap_rows callers
+.set WRAP_MAX,  1024
 
 // default tab stop width, the live value is _av_tab_width
 .set TAB_WIDTH, 4

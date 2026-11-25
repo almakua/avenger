@@ -200,7 +200,8 @@ Lyes:
     mov w0, #1
     ret
 
-// redraw this and the other panes showing the doc, sync the window's edited dot
+// redraw this and the other panes showing the doc, sync the window's edited dot, schedule
+// validation
     .p2align 2
 Lrefresh:
     stp x29, x30, [sp, #-32]!
@@ -209,6 +210,9 @@ Lrefresh:
     mov x19, x0
     mov x2, #1
     MSG setNeedsDisplay
+    STATE x20, x19
+    ldr x0, [x20, #V_DOC]
+    bl _av_lint_touch
     STATE x20, x19
     ldr x20, [x20, #V_DOC]
     ldr x20, [x20, #DOC_VIEWS]
@@ -236,16 +240,88 @@ Lrefresh:
     ldp x29, x30, [sp], #32
     ret
 
-// scroll so the cursor is inside the view, with a few columns of margin horizontally
+// size_t rows_of(Doc *d, size_t line, size_t width): visual rows of a line
     .p2align 2
-Lensure:
-    stp x29, x30, [sp, #-80]!
+Lrows_of:
+    LADDR x3, _av_wrap_starts
+    mov x4, #WRAP_MAX
+    b _av_wrap_rows
+
+// (line, rows into it) top_of(View *v, size_t width): first visible line and how many of its
+// visual rows are scrolled past (fraction in d0)
+    .p2align 2
+Ltop_of:
+    stp x29, x30, [sp, #-48]!
     mov x29, sp
     stp x19, x20, [sp, #16]
-    str x21, [sp, #32]
-    stp d8, d9, [sp, #40]
-    stp d10, d11, [sp, #56]
-    str d12, [sp, #72]
+    str d8, [sp, #32]
+    mov x19, x0
+    mov x20, x1
+    ldr d0, [x19, #V_SCROLLY]
+    LDRD d1, _av_line_h
+    fdiv d0, d0, d1
+    frintm d1, d0
+    fsub d8, d0, d1
+    fcvtzu x9, d1
+    ldr x0, [x19, #V_DOC]
+    ldr x10, [x0, #BUF_NLINES]
+    sub x10, x10, #1
+    cmp x9, x10
+    csel x9, x10, x9, hi
+    str x9, [sp, #40]
+    mov x1, x9
+    mov x2, x20
+    bl Lrows_of
+    ucvtf d0, x0
+    fmul d0, d0, d8
+    ldr x0, [sp, #40]
+    ldr d8, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
+
+// void set_top(View *v, size_t line, double rows_in, size_t width): scroll so that line, rows_in
+// visual rows down, is at the top
+    .p2align 2
+Lset_top:
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    str d8, [sp, #32]
+    mov x19, x0
+    mov x20, x1
+    fmov d8, d0
+    ldr x0, [x19, #V_DOC]
+    mov x1, x20
+    bl Lrows_of
+    ucvtf d1, x0
+    fdiv d0, d8, d1
+    ucvtf d1, x20
+    fadd d0, d0, d1
+    LDRD d1, _av_line_h
+    fmul d0, d0, d1
+    movi d1, #0
+    fmax d0, d0, d1
+    str d0, [x19, #V_SCROLLY]
+    ldr d8, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
+
+// scroll so the cursor is inside the view, with a few columns of margin horizontally
+// x19 self, x20 view, x21 doc, x22 wrap width, x23 cursor row, x24 its line, x25 line, x26 rows
+// d8 W, d9 H, d10 line h, d11 advance, d12 rows counted, d13 rows that fit
+    .p2align 2
+Lensure:
+    stp x29, x30, [sp, #-128]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    stp d8, d9, [sp, #80]
+    stp d10, d11, [sp, #96]
+    stp d12, d13, [sp, #112]
     mov x19, x0
     STATE x20, x19
     ldr x21, [x20, #V_DOC]
@@ -254,26 +330,89 @@ Lensure:
     fmov d9, d3
     LDRD d10, _av_line_h
     LDRD d11, _av_adv
-
+    fdiv d13, d9, d10
+    mov x0, x20
+    fmov d0, d8
+    bl _av_render_wrap
+    mov x22, x0
+    mov x0, x21
+    ldr x1, [x20, #V_CUR]
+    mov x2, x22
+    bl _av_wrap_locate
+    mov x23, x0
     mov x0, x21
     ldr x1, [x20, #V_CUR]
     bl _av_buf_line_of
-    ucvtf d0, x0
-    fmul d0, d0, d10
-    ldr d1, [x20, #V_SCROLLY]
-    fcmp d0, d1
-    b.ge 1f
-    fmov d1, d0
-1:  fadd d2, d0, d10
-    fadd d3, d1, d9
-    fcmp d2, d3
-    b.le 2f
-    fsub d1, d2, d9
-2:  movi d4, #0
-    fmax d1, d1, d4
-    str d1, [x20, #V_SCROLLY]
-
+    mov x24, x0
+    mov x0, x20
+    mov x1, x22
+    bl Ltop_of
+    mov x25, x0
+    // above the top: the cursor row becomes the first one
+    cmp x24, x25
+    b.lo 1f
+    b.hi 2f
+    ucvtf d1, x23
+    fcmp d1, d0
+    b.ge 3f
+1:  mov x0, x20
+    mov x1, x24
+    ucvtf d0, x23
+    mov x2, x22
+    bl Lset_top
+    b 8f
+    // below: rows from the top edge to the bottom of the cursor row
+2:  sub x9, x24, x25
+    fcvtzu x10, d13
+    add x10, x10, #2
+    cmp x9, x10
+    b.hi 5f
+    fneg d12, d0
+    mov x26, x25
+21: cmp x26, x24
+    b.hs 4f
     mov x0, x21
+    mov x1, x26
+    mov x2, x22
+    bl Lrows_of
+    ucvtf d0, x0
+    fadd d12, d12, d0
+    add x26, x26, #1
+    b 21b
+3:  fneg d12, d0
+4:  add x9, x23, #1
+    ucvtf d0, x9
+    fadd d12, d12, d0
+    fcmp d12, d13
+    b.le 8f
+    // the cursor row goes to the bottom: walk back until a screenful of rows is above it
+5:  add x9, x23, #1
+    ucvtf d12, x9
+    mov x26, x24
+51: fcmp d12, d13
+    b.ge 52f
+    cbz x26, 53f
+    sub x26, x26, #1
+    mov x0, x21
+    mov x1, x26
+    mov x2, x22
+    bl Lrows_of
+    ucvtf d0, x0
+    fadd d12, d12, d0
+    b 51b
+52: fsub d0, d12, d13
+    mov x0, x20
+    mov x1, x26
+    mov x2, x22
+    bl Lset_top
+    b 8f
+53: str xzr, [x20, #V_SCROLLY]
+
+    // horizontal, only when lines do not wrap
+8:  cbz x22, 81f
+    str xzr, [x20, #V_SCROLLX]
+    b 9f
+81: mov x0, x21
     ldr x1, [x20, #V_CUR]
     bl _av_col_of
     ucvtf d12, x0
@@ -285,26 +424,103 @@ Lensure:
     fmov d5, #4.0
     fmul d5, d5, d11
     fcmp d12, d1
-    b.ge 3f
+    b.ge 82f
     fsub d1, d12, d5
-    b 4f
-3:  fadd d3, d12, d11
+    b 83f
+82: fadd d3, d12, d11
     fadd d4, d1, d2
     fcmp d3, d4
-    b.le 4f
+    b.le 83f
     fsub d1, d3, d2
     fadd d1, d1, d5
-4:  movi d4, #0
+83: movi d4, #0
     fmax d1, d1, d4
     str d1, [x20, #V_SCROLLX]
 
-    ldr d12, [sp, #72]
-    ldp d10, d11, [sp, #56]
-    ldp d8, d9, [sp, #40]
-    ldr x21, [sp, #32]
+9:  ldp d12, d13, [sp, #112]
+    ldp d10, d11, [sp, #96]
+    ldp d8, d9, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #128
+    ret
+
+// void scroll_rows(View *v, double rows, size_t width): moves the top by visual rows (down when
+// positive), so wrapped lines scroll at the same speed as the others
+    .p2align 2
+Lscroll_rows:
+    stp x29, x30, [sp, #-80]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp d8, d9, [sp, #48]
+    str d10, [sp, #64]
+    mov x19, x0
+    mov x20, x1
+    fmov d8, d0
+    ldr x21, [x19, #V_DOC]
+    bl Ltop_of
+    mov x22, x0
+    fmov d9, d0
+    mov x0, x21
+    mov x1, x22
+    mov x2, x20
+    bl Lrows_of
+    ucvtf d10, x0
+    fcmp d8, #0.0
+    b.lt 3f
+    // down: through the rest of each line
+1:  fsub d0, d10, d9
+    fcmp d8, d0
+    b.lt 2f
+    fsub d8, d8, d0
+    add x9, x22, #1
+    ldr x10, [x21, #BUF_NLINES]
+    cmp x9, x10
+    b.hs 5f
+    mov x22, x9
+    movi d9, #0
+    mov x0, x21
+    mov x1, x22
+    mov x2, x20
+    bl Lrows_of
+    ucvtf d10, x0
+    b 1b
+2:  fadd d9, d9, d8
+    b 6f
+    // up: back through the rows above
+3:  fneg d8, d8
+4:  fcmp d8, d9
+    b.le 41f
+    fsub d8, d8, d9
+    cbz x22, 42f
+    sub x22, x22, #1
+    mov x0, x21
+    mov x1, x22
+    mov x2, x20
+    bl Lrows_of
+    ucvtf d10, x0
+    fmov d9, d10
+    b 4b
+41: fsub d9, d9, d8
+    b 6f
+42: movi d9, #0
+    b 6f
+5:  movi d9, #0
+6:  mov x0, x19
+    mov x1, x22
+    fmov d0, d9
+    mov x2, x20
+    bl Lset_top
+    ldr d10, [sp, #64]
+    ldp d8, d9, [sp, #48]
+    ldp x21, x22, [sp, #32]
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #80
     ret
+
 
 // void clamp_scroll(View *v)
     .p2align 2
@@ -326,13 +542,16 @@ Lclamp:
     ret
 
 // size_t hit(NSView *self, NSEvent *e), buffer position under the mouse
+// x19 self, x20 view, x21 doc, x22 wrap width, x23 line, x24 its rows; d8 x, d9 y, d10 rows down
     .p2align 2
 Lhit:
-    stp x29, x30, [sp, #-64]!
+    stp x29, x30, [sp, #-112]!
     mov x29, sp
     stp x19, x20, [sp, #16]
     stp x21, x22, [sp, #32]
-    stp d8, d9, [sp, #48]
+    stp x23, x24, [sp, #48]
+    stp d8, d9, [sp, #64]
+    stp d10, d11, [sp, #80]
     mov x19, x0
     STATE x20, x19
     ldr x21, [x20, #V_DOC]
@@ -345,18 +564,44 @@ Lhit:
     fmov d9, d1
     mov x0, x19
     MSG bounds
-    fsub d0, d3, d9
-    ldr d1, [x20, #V_SCROLLY]
-    fadd d0, d0, d1
+    fsub d10, d3, d9
+    mov x0, x20
+    fmov d0, d2
+    bl _av_render_wrap
+    mov x22, x0
+    mov x0, x20
+    mov x1, x22
+    bl Ltop_of
+    mov x23, x0
     LDRD d1, _av_line_h
-    fdiv d0, d0, d1
-    fcvtms x1, d0
-    cmp x1, #0
-    csel x1, xzr, x1, lt
-    ldr x2, [x21, #BUF_NLINES]
-    sub x2, x2, #1
-    cmp x1, x2
-    csel x22, x2, x1, gt
+    fdiv d10, d10, d1
+    fadd d10, d10, d0
+    // down through the visible lines to the one under the pointer
+1:  mov x0, x21
+    mov x1, x23
+    mov x2, x22
+    bl Lrows_of
+    mov x24, x0
+    ucvtf d0, x0
+    fcmp d10, d0
+    b.lt 2f
+    add x9, x23, #1
+    ldr x10, [x21, #BUF_NLINES]
+    cmp x9, x10
+    b.hs 2f
+    fsub d10, d10, d0
+    mov x23, x9
+    b 1b
+2:  fcvtms x9, d10
+    cmp x9, #0
+    csel x9, xzr, x9, lt
+    sub x10, x24, #1
+    cmp x9, x10
+    csel x9, x10, x9, gt
+    mov x10, #(WRAP_MAX - 1)
+    cmp x9, x10
+    csel x9, x10, x9, gt
+    str x9, [sp, #96]
     mov x0, x21
     bl _av_render_text_x
     fsub d0, d8, d0
@@ -367,13 +612,27 @@ Lhit:
     fcvtas x2, d0
     cmp x2, #0
     csel x2, xzr, x2, lt
-    mov x0, x21
-    mov x1, x22
+    // row start plus the column, not past the row end
+    ldr x9, [sp, #96]
+    LADDR x10, _av_wrap_starts
+    ldr x11, [x10, x9, lsl #3]
+    add x2, x2, x11
+    add x12, x9, #1
+    cmp x12, x24
+    b.hs 3f
+    ldr x13, [x10, x12, lsl #3]
+    sub x13, x13, #1
+    cmp x2, x13
+    csel x2, x13, x2, hi
+3:  mov x0, x21
+    mov x1, x23
     bl _av_pos_at_col
-    ldp d8, d9, [sp, #48]
+    ldp d10, d11, [sp, #80]
+    ldp d8, d9, [sp, #64]
+    ldp x23, x24, [sp, #48]
     ldp x21, x22, [sp, #32]
     ldp x19, x20, [sp, #16]
-    ldp x29, x30, [sp], #64
+    ldp x29, x30, [sp], #112
     ret
 
 // keyDown:, x22 modifiers, x23 key code, x24 shift
@@ -655,9 +914,18 @@ Lscroll_wheel:
     LDRD d0, _av_line_h
     fmul d8, d8, d0
     fmul d9, d9, d0
-1:  ldr d0, [x20, #V_SCROLLY]
-    fsub d0, d0, d8
-    str d0, [x20, #V_SCROLLY]
+    // vertical motion counts visual rows
+1:  mov x0, x19
+    MSG bounds
+    mov x0, x20
+    fmov d0, d2
+    bl _av_render_wrap
+    mov x1, x0
+    LDRD d0, _av_line_h
+    fdiv d0, d8, d0
+    fneg d0, d0
+    mov x0, x20
+    bl Lscroll_rows
     ldr d0, [x20, #V_SCROLLX]
     fsub d0, d0, d9
     str d0, [x20, #V_SCROLLX]

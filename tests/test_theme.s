@@ -27,6 +27,7 @@ Lcfg:
     .ascii "font: Fira Code\n"
     .ascii "font_size: 200\n"
     .ascii "tab_width: 2\n"
+    .ascii "wrap: off\n"
     .ascii "theme: \"catppuccin-latte\"\n"
     .ascii "keys:\n"
     .asciz "  next_tab: C-n\n"
@@ -131,6 +132,10 @@ FUNC_BEGIN _main
     cmp x0, #0
     cset x0, ne
     CHECK 45, 1
+    LDRG x0, _av_cfg_wrap
+    CHECK 90, 0
+    LDRG x0, _av_cfg_guides
+    CHECK 91, 1
     PARSE_CFG Lcfg_bad
     CHECK 46, -1
     LDRG x0, _av_tab_width

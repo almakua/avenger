@@ -1,4 +1,4 @@
-// config.yaml: font, font_size, theme, tab_width, prefix, keys
+// config.yaml: font, font_size, theme, tab_width, wrap, indent_guides, prefix, keys
 // values point into the parsed tree, which stays alive until the next successful load
 
 .include "macros.inc"
@@ -23,6 +23,8 @@ Lk_font:      .asciz "font"
 Lk_size:      .asciz "font_size"
 Lk_theme:     .asciz "theme"
 Lk_tab:       .asciz "tab_width"
+Lk_wrap:      .asciz "wrap"
+Lk_guides:    .asciz "indent_guides"
 Lk_prefix:    .asciz "prefix"
 Lk_keys:      .asciz "keys"
 Lfmt_err:     .asciz "avenger: %s:%ld: %s\n"
@@ -36,6 +38,8 @@ Lfmt_err:     .asciz "avenger: %s:%ld: %s\n"
     .globl _av_cfg_keys
     .globl _av_cfg_err
     .globl _av_cfg_err_line
+    .globl _av_cfg_wrap
+    .globl _av_cfg_guides
 _av_cfg_font:      .quad Ldef_font
 _av_cfg_font_size: .double 14.0
 _av_cfg_theme:     .quad Ldef_theme
@@ -43,6 +47,8 @@ _av_cfg_prefix:    .quad Ldef_prefix
 _av_cfg_keys:      .quad 0
 _av_cfg_err:       .quad 0
 _av_cfg_err_line:  .quad 0
+_av_cfg_wrap:      .quad 1
+_av_cfg_guides:    .quad 1
 
     .zerofill __DATA,__bss,_av_cfg_yaml,Y_SIZE,4
     .zerofill __DATA,__bss,_av_cfg_new,Y_SIZE,4
@@ -121,6 +127,19 @@ Lapply_root:
     cmp x0, x9
     csel x0, x9, x0, gt
     STRG x0, _av_tab_width, x9
+
+    mov x0, x19
+    LADDR x1, Lk_wrap
+    bl _av_yaml_get
+    mov x1, #1
+    bl _av_yaml_bool
+    STRG x0, _av_cfg_wrap, x9
+    mov x0, x19
+    LADDR x1, Lk_guides
+    bl _av_yaml_get
+    mov x1, #1
+    bl _av_yaml_bool
+    STRG x0, _av_cfg_guides, x9
 
     mov x0, x19
     LADDR x1, Lk_keys

@@ -15,6 +15,10 @@ Lspaces:
 _av_tab_width:
     .quad TAB_WIDTH
 
+    // row start columns of the last av_wrap_locate
+    .zerofill __DATA,__bss,_av_wrap_starts,(WRAP_MAX * 8),3
+    .globl _av_wrap_starts
+
     .text
 // size_t av_col_of(Buffer *b, size_t pos), visual column with tab stops
 FUNC_BEGIN _av_col_of
@@ -392,32 +396,10 @@ Lmv_pgup:
 Lmv_pgdn:
     mov x25, x22
 
-    // vertical moves keep the preferred column across short lines
 Lmv_vert:
-    mov x0, x23
-    mov x1, x24
-    bl _av_buf_line_of
-    mov x26, x0
-    ldr x0, [x19, #V_PREFCOL]
-    tbz x0, #63, 1f
-    mov x0, x23
-    mov x1, x24
-    bl _av_col_of
-    str x0, [x19, #V_PREFCOL]
-1:  adds x1, x26, x25
-    b.mi 2f
-    ldr x9, [x23, #BUF_NLINES]
-    cmp x1, x9
-    b.hs 3f
-    mov x0, x23
-    ldr x2, [x19, #V_PREFCOL]
-    bl _av_pos_at_col
-    mov x24, x0
-    b Lmv_keep
-2:  mov x24, #0
-    b Lmv_keep
-3:  mov x0, x23
-    bl _av_buf_len
+    mov x0, x19
+    mov x1, x25
+    bl Lvert
     mov x24, x0
     b Lmv_keep
 
@@ -652,4 +634,248 @@ Lview_history:
     str x0, [x19, #V_PREFCOL]
 1:  ldr x19, [sp, #16]
     ldp x29, x30, [sp], #32
+    ret
+
+// size_t av_wrap_rows(Buffer *b, size_t line, size_t width, size_t *starts, size_t max)
+// visual rows of a line wrapped at width columns (0: no wrap), breaking after blanks when a
+// word fits, else mid word; starts[] gets the first column of each row (at most max)
+FUNC_BEGIN _av_wrap_rows
+    stp x29, x30, [sp, #-96]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    stp x27, x28, [sp, #80]
+    mov x19, x0
+    mov x24, x1
+    mov x20, x2
+    mov x21, x3
+    mov x22, x4
+    mov x23, #1
+    cbz x22, 1f
+    str xzr, [x21]
+1:  cbz x20, 9f
+    mov x0, x19
+    mov x1, x24
+    bl _av_buf_line_end
+    mov x27, x0
+    mov x0, x19
+    mov x1, x24
+    bl _av_buf_line_start
+    mov x2, x0                 // byte position
+    mov x3, #0                 // column
+    mov x25, #0                // row start column
+    mov x26, #0                // column after the last blank
+    BUF_GEOM x19
+2:  cmp x2, x27
+    b.hs 9f
+    BUF_BYTE w4, x2
+    and w5, w4, #0xc0
+    cmp w5, #0x80
+    b.ne 3f
+    add x2, x2, #1
+    b 2b
+    // x6 width of this character
+3:  mov x6, #1
+    cmp w4, #9
+    b.ne 4f
+    LDRG x14, _av_tab_width
+    udiv x15, x3, x14
+    madd x6, x15, x14, x14
+    sub x6, x6, x3
+4:  add x7, x3, x6
+    add x9, x25, x20
+    cmp x7, x9
+    b.ls 7f
+    // overflow: a blank hangs at the row end, else back to the last blank or cut here
+    cmp w4, #' '
+    b.ne 5f
+    mov x9, x7
+    b 6f
+5:  cmp x26, x25
+    csel x9, x26, x3, hi
+    cmp x9, x25
+    csel x9, x7, x9, ls
+6:  cmp x23, x22
+    b.hs 61f
+    str x9, [x21, x23, lsl #3]
+61: add x23, x23, #1
+    mov x25, x9
+    mov x26, x9
+    // the character already went to the previous row, or is placed again in the new one
+    cmp x9, x3
+    b.hi 8f
+    b 2b
+7:  cmp w4, #' '
+    ccmp w4, #9, #4, ne
+    csel x26, x7, x26, eq
+8:  mov x3, x7
+    add x2, x2, #1
+    b 2b
+9:  mov x0, x23
+    ldp x27, x28, [sp, #80]
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #96
+    ret
+
+// size_t av_wrap_row_of(const size_t *starts, size_t rows, size_t col): row holding col
+FUNC_BEGIN _av_wrap_row_of
+    mov x9, #WRAP_MAX
+    cmp x1, x9
+    csel x1, x9, x1, hi
+    mov x3, #0
+1:  add x4, x3, #1
+    cmp x4, x1
+    b.hs 2f
+    ldr x5, [x0, x4, lsl #3]
+    cmp x5, x2
+    b.hi 2f
+    mov x3, x4
+    b 1b
+2:  mov x0, x3
+    ret
+
+// (row, rows) av_wrap_locate(Buffer *b, size_t pos, size_t width): visual row of pos inside its
+// line and the line's row count; row starts are left in av_wrap_starts
+FUNC_BEGIN _av_wrap_locate
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+    bl _av_col_of
+    mov x22, x0
+    mov x0, x19
+    mov x1, x20
+    bl _av_buf_line_of
+    mov x1, x0
+    mov x0, x19
+    mov x2, x21
+    LADDR x3, _av_wrap_starts
+    mov x4, #WRAP_MAX
+    bl _av_wrap_rows
+    mov x21, x0
+    mov x1, x0
+    LADDR x0, _av_wrap_starts
+    mov x2, x22
+    bl _av_wrap_row_of
+    mov x1, x21
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
+
+// size_t vert(View *v, long delta): delta visual rows down (or up), the preferred column is
+// kept relative to the row start; past either end of the buffer clamps to it
+    .p2align 2
+Lvert:
+    stp x29, x30, [sp, #-96]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    mov x19, x0
+    mov x20, x1
+    ldr x21, [x19, #V_DOC]
+    ldr x22, [x19, #V_WRAP]
+    mov x0, x21
+    ldr x1, [x19, #V_CUR]
+    mov x2, x22
+    bl _av_wrap_locate
+    mov x25, x0
+    mov x24, x1
+    mov x0, x21
+    ldr x1, [x19, #V_CUR]
+    bl _av_buf_line_of
+    mov x23, x0
+    ldr x9, [x19, #V_PREFCOL]
+    tbz x9, #63, 1f
+    mov x0, x21
+    ldr x1, [x19, #V_CUR]
+    bl _av_col_of
+    LADDR x10, _av_wrap_starts
+    ldr x10, [x10, x25, lsl #3]
+    sub x9, x0, x10
+    str x9, [x19, #V_PREFCOL]
+1:  cbz x20, 6f
+    tbnz x20, #63, 3f
+    // down
+    add x9, x25, #1
+    cmp x9, x24
+    b.hs 2f
+    mov x25, x9
+    sub x20, x20, #1
+    b 1b
+2:  add x9, x23, #1
+    ldr x10, [x21, #BUF_NLINES]
+    cmp x9, x10
+    b.hs 8f
+    mov x23, x9
+    mov x25, #0
+    bl Lvert_rows
+    sub x20, x20, #1
+    b 1b
+    // up
+3:  cbz x25, 4f
+    sub x25, x25, #1
+    add x20, x20, #1
+    b 1b
+4:  cbz x23, 7f
+    sub x23, x23, #1
+    bl Lvert_rows
+    sub x25, x24, #1
+    mov x9, #(WRAP_MAX - 1)
+    cmp x25, x9
+    csel x25, x9, x25, hi
+    add x20, x20, #1
+    b 1b
+    // column in the target row, not past its end
+6:  LADDR x10, _av_wrap_starts
+    ldr x2, [x10, x25, lsl #3]
+    ldr x9, [x19, #V_PREFCOL]
+    add x2, x2, x9
+    add x11, x25, #1
+    cmp x11, x24
+    b.hs 61f
+    cmp x11, #WRAP_MAX
+    b.hs 61f
+    ldr x12, [x10, x11, lsl #3]
+    sub x12, x12, #1
+    cmp x2, x12
+    csel x2, x12, x2, hi
+61: mov x0, x21
+    mov x1, x23
+    bl _av_pos_at_col
+    b 9f
+7:  mov x0, #0
+    b 9f
+8:  mov x0, x21
+    bl _av_buf_len
+9:  ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #96
+    ret
+
+// rows of line x23 into x24, starts in av_wrap_starts; helper of vert, uses its registers
+    .p2align 2
+Lvert_rows:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    mov x0, x21
+    mov x1, x23
+    mov x2, x22
+    LADDR x3, _av_wrap_starts
+    mov x4, #WRAP_MAX
+    bl _av_wrap_rows
+    mov x24, x0
+    ldp x29, x30, [sp], #16
     ret

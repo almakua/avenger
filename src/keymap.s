@@ -44,6 +44,8 @@ La_find:        .asciz "find"
 La_replace:     .asciz "replace"
 La_find_next:   .asciz "find_next"
 La_find_prev:   .asciz "find_previous"
+La_wrap:        .asciz "toggle_wrap"
+La_outline:     .asciz "outline"
 
 Lk_space:    .asciz "space"
 Lk_tab:      .asciz "tab"
@@ -78,6 +80,7 @@ Laction_names:
     .quad La_pane_l, La_pane_r, La_pane_u, La_pane_d, La_next_pane, La_close_pane, La_zoom_pane
     .quad La_resize_l, La_resize_r, La_resize_u, La_resize_d
     .quad La_palette, La_find, La_replace, La_find_next, La_find_prev
+    .quad La_wrap, La_outline
 Lkey_names:
     .quad Lk_space, ' ', Lk_tab, 9, Lk_enter, 13, Lk_return, 13, Lk_esc, 27, Lk_escape, 27
     .quad Lk_bs, 127, Lk_left, KEY_LEFT_CP, Lk_right, KEY_RIGHT_CP, Lk_up, KEY_UP_CP
@@ -126,6 +129,8 @@ Ldefaults:
     .long 0, ':', A_PALETTE, 0
     .long 0, '/', A_FIND, 0
     .long 0, '?', A_REPLACE, 0
+    .long 0, 'w', A_TOGGLE_WRAP, 0
+    .long 0, 'g', A_OUTLINE, 0
 Ldefaults_end:
 
     .zerofill __DATA,__bss,_av_keymap,(KM_MAX * KM_SIZE),4

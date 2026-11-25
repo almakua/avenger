@@ -54,6 +54,34 @@
     CHECK (\id + 1), \anchor
 .endm
 
+.macro ROWS id, line, width, rows, s1, s2
+    LADDR x0, _tdoc3
+    mov x1, #\line
+    mov x2, #\width
+    LADDR x3, _tstarts
+    mov x4, #8
+    bl _av_wrap_rows
+    CHECK \id, \rows
+    LADDR x9, _tstarts
+    ldr x0, [x9, #8]
+    CHECK (\id + 1), \s1
+    LADDR x9, _tstarts
+    ldr x0, [x9, #16]
+    CHECK (\id + 2), \s2
+.endm
+
+// move view 3 one visual row, expect the cursor at pos
+.macro VMOVE id, cmd, pos
+    LADDR x0, _tview3
+    mov x1, #\cmd
+    mov x2, #0
+    mov x3, #10
+    bl _av_view_move
+    LADDR x9, _tview3
+    ldr x0, [x9, #V_CUR]
+    CHECK \id, \pos
+.endm
+
 .macro LEN_IS id, expected
     CALL0 _av_buf_len, _tdoc
     CHECK \id, \expected
@@ -75,6 +103,9 @@
     .zerofill __DATA,__bss,_tdoc,DOC_SIZE,4
     .zerofill __DATA,__bss,_tview,V_SIZE,4
     .zerofill __DATA,__bss,_tview2,V_SIZE,4
+    .zerofill __DATA,__bss,_tdoc3,DOC_SIZE,4
+    .zerofill __DATA,__bss,_tview3,V_SIZE,4
+    .zerofill __DATA,__bss,_tstarts,64,3
 
     .section __TEXT,__cstring,cstring_literals
 Ls_a:      .asciz "a"
@@ -91,6 +122,8 @@ Ls_keynl:  .asciz "  key:\n  "
 Ls_tabs:   .asciz "\tab\tc"
 Ls_words:  .asciz "foo bar_baz\n  qux"
 Ls_utf8:   .asciz "a\303\251"
+Ls_wrap:   .asciz "aaa bbb ccc\nxy"
+Ls_long:   .asciz "abcdefg"
 
     .text
 FUNC_BEGIN _main
@@ -278,6 +311,60 @@ FUNC_BEGIN _main
     LADDR x1, _tview
     bl _av_doc_detach
     CHECK 71, 0
+
+    // wrapping after blanks, mid word when a word does not fit
+    CALL0 _av_doc_init, _tdoc3
+    LADDR x0, _tdoc3
+    mov x1, #0
+    LADDR x2, Ls_wrap
+    mov x3, #14
+    mov x4, #0
+    bl _av_doc_insert
+    ROWS 80, 0, 8, 2, 8, 0
+    ROWS 83, 0, 5, 3, 4, 8
+    ROWS 86, 1, 5, 1, 4, 8
+    LADDR x0, _tdoc3
+    mov x1, #0
+    mov x2, #0
+    mov x3, #0
+    mov x4, #0
+    bl _av_wrap_rows
+    CHECK 89, 1
+    // up and down move by visual rows
+    LADDR x9, _tview3
+    LADDR x10, _tdoc3
+    str x10, [x9, #V_DOC]
+    mov x10, #5
+    str x10, [x9, #V_WRAP]
+    mov x10, #1
+    stp x10, x10, [x9, #V_CUR]
+    mov x10, #-1
+    str x10, [x9, #V_PREFCOL]
+    VMOVE 90, MV_DOWN, 5
+    VMOVE 91, MV_DOWN, 9
+    VMOVE 92, MV_DOWN, 13
+    VMOVE 93, MV_DOWN, 14
+    LADDR x0, _tview3
+    mov x1, #13
+    mov x2, #0
+    bl _av_view_set_cursor
+    VMOVE 94, MV_UP, 9
+    VMOVE 95, MV_UP, 5
+    VMOVE 96, MV_UP, 1
+    VMOVE 97, MV_UP, 0
+    // a long word is cut every width columns
+    LADDR x0, _tdoc3
+    mov x1, #0
+    mov x2, #14
+    mov x3, #0
+    bl _av_doc_delete
+    LADDR x0, _tdoc3
+    mov x1, #0
+    LADDR x2, Ls_long
+    mov x3, #7
+    mov x4, #0
+    bl _av_doc_insert
+    ROWS 98, 0, 3, 3, 3, 6
 
     bl Lsummary
     ldp x29, x30, [sp], #16
