@@ -26,6 +26,7 @@
     SELDEF keyDown, "keyDown:"
     SELDEF undo, "undo:"
     SELDEF selectAll, "selectAll:"
+    SELDEF firstResponder, "firstResponder"
 
     .text
 // int av_snapshot(NSView *view, const char *png_path)
@@ -68,7 +69,7 @@ FUNC_BEGIN _av_snapshot
     ldp x29, x30, [sp], #80
     ret
 
-// void av_snapshot_type(NSView *unused, const char *keys), synthetic ASCII key events to the active tab
+// void av_snapshot_type(NSView *unused, const char *keys), synthetic ASCII key events to the first responder
 // \n return, \b backspace, 0x1c..0x1f left/right/up/down, 0x1a undo:, 0x01 selectAll:, 0x14 next theme,
 // 0x13 control-s (the default prefix), 0x10 runs the run loop for 0.5 s (terminal output)
 FUNC_BEGIN _av_snapshot_type
@@ -156,9 +157,10 @@ FUNC_BEGIN _av_snapshot_type
     mov x6, x23
     mov x7, x23
     MSG keyEvent
-    // like the real first responder: whichever tab is active now
+    // to the first responder, like a real key: a pane, the palette or the find bar
     mov x19, x0
-    bl _av_tabs_current_view
+    LDRG x0, _av_window
+    MSG firstResponder
     mov x2, x19
     MSG keyDown
     mov x0, x23

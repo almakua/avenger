@@ -24,6 +24,7 @@ prefix: C-s
 # panes: split_right %, split_down ", split_terminal_right |, split_terminal_down -,
 # pane_left/right/up/down arrows, next_pane o, close_pane x, zoom_pane z,
 # resize_left/right/up/down M-arrows
+# command_palette ":", find /, replace ?, find_next and find_previous (menu only: ⌘G ⇧⌘G)
 # command+1..9 and the menu shortcuts work without the prefix
 # pressing the prefix twice sends it to the tab (C-s C-s gives a terminal ^S)
 keys:

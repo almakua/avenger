@@ -789,6 +789,19 @@ Lsave:
     mov x0, #A_SAVE
     b _av_action
 
+// void av_editor_reveal(NSView *view): scroll the cursor into view and redraw
+FUNC_BEGIN _av_editor_reveal
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x19, [sp, #16]
+    mov x19, x0
+    bl Lensure
+    mov x0, x19
+    bl Lrefresh
+    ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
 // View *av_editor_state(NSView *view)
 FUNC_BEGIN _av_editor_state
     STATE x0, x0

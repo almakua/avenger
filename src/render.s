@@ -25,7 +25,9 @@
 .set L_RUN,    280
 .set L_BYTE,   288
 .set L_COL,    296
-.set DRAW_FRAME, 320
+.set L_HLP,    304
+.set L_HLRGBA, 320
+.set DRAW_FRAME, 352
 
     CLASSREF NSGraphicsContext
     SELDEF currentContext, "currentContext"
@@ -47,6 +49,7 @@ Lfont_warn:
     // terminal colors outside the theme, by rgb555, created on first use
     .zerofill __DATA,__bss,_av_rgb_attrs,(RGB_COLORS * 8),3
     .globl _av_attrs
+    .globl _av_font
     .globl _av_line_h
     .globl _av_adv
     .globl _av_base_off
@@ -332,6 +335,14 @@ FUNC_BEGIN _av_render_draw
     fmov d2, d8
     fmov d3, d9
     bl _CGContextClipToRect
+    // find matches: the accent color, faint
+    LADDR x9, _av_theme
+    ldp x10, x11, [x9, #T_ACCENT]
+    stp x10, x11, [sp, #L_HLRGBA]
+    ldr x10, [x9, #(T_ACCENT + 16)]
+    str x10, [sp, #(L_HLRGBA + 16)]
+    fmov d0, #0.25
+    str d0, [sp, #(L_HLRGBA + 24)]
 
     mov x0, x21
     LADDR x1, _av_theme
@@ -434,8 +445,46 @@ Lrow:
     add x1, x1, #T_SEL
     bl _av_fill
 
+    // find bar matches on this line, under the text
+2:  LDRG x9, _av_find_hl
+    cbz x9, 29f
+    ldr x9, [sp, #L_LS]
+    str x9, [sp, #L_HLP]
+21: mov x0, x22
+    ldr x1, [sp, #L_HLP]
+    ldr x2, [sp, #L_LE]
+    LADDR x3, _av_find_pat
+    LDRG x4, _av_find_hl
+    LDRG x5, _av_find_flags
+    bl _av_buf_find
+    tbnz x0, #63, 29f
+    mov x1, x0
+    LDRG x9, _av_find_hl
+    add x9, x0, x9
+    str x9, [sp, #L_HLP]
+    mov x0, x22
+    bl _av_col_of
+    str x0, [sp, #L_CA]
+    mov x0, x22
+    ldr x1, [sp, #L_HLP]
+    bl _av_col_of
+    ldr x9, [sp, #L_CA]
+    sub x1, x0, x9
+    ucvtf d2, x1
+    fmul d2, d2, d14
+    ucvtf d0, x9
+    fmul d0, d0, d14
+    fadd d0, d0, d12
+    fsub d0, d0, d13
+    ldr d1, [sp, #L_YBOT]
+    fmov d3, d10
+    mov x0, x21
+    add x1, sp, #L_HLRGBA
+    bl _av_fill
+    b 21b
+
     // text: lex the expanded line, draw each color run at its column
-2:  mov x0, x22
+29: mov x0, x22
     ldp x1, x2, [sp, #L_LS]
     bl Lexpand
     cbz x1, 3f

@@ -23,6 +23,7 @@
 .set NSViewHeightSizable, 16
 .set KEY_ESC_CODE, 53
 .set DIVIDER_SLOP, 3           // points around a divider that still grab it
+.set NSWindowBelow, -1
 
 // tab bar drawRect locals
 .set TB_TITLE, 176
@@ -42,6 +43,7 @@
     SELDEF initWithFrame, "initWithFrame:"
     SELDEF setAutoresizingMask, "setAutoresizingMask:"
     SELDEF addSubview, "addSubview:"
+    SELDEF addSubviewBelow, "addSubview:positioned:relativeTo:"
     SELDEF removeFromSuperview, "removeFromSuperview"
     SELDEF superview, "superview"
     SELDEF setFrame, "setFrame:"
@@ -309,9 +311,12 @@ Lmount:
     LDRG x9, _av_container
     cmp x0, x9
     b.eq 2f
+    // panes stay under the palette and the find bar
     mov x0, x9
     ldr x2, [x20, #P_NSVIEW]
-    MSG addSubview
+    mov x3, #NSWindowBelow
+    mov x4, #0
+    MSG addSubviewBelow
 2:  mov x0, x19
     mov x1, x20
     bl Lvis_next
@@ -388,6 +393,15 @@ Lsync_focus:
     bl _av_tabbar_redraw
     ldp x29, x30, [sp], #16
     ret
+
+// void av_tabs_refocus(void): keyboard back to the focused pane (after the palette or find bar)
+FUNC_BEGIN _av_tabs_refocus
+    b Lsync_focus
+
+// const char *av_tab_name(size_t i): name of the focused pane of tab i
+FUNC_BEGIN _av_tab_name
+    TAB x0, x0
+    b Ltab_name
 
 // void set_focus(Tab *t, Pane *leaf): both panes redraw their cursor
     .p2align 2
@@ -499,13 +513,17 @@ FUNC_BEGIN _av_tabs_layout
     fmov d2, d8
     fsub d3, d9, d10
     bl _av_pane_layout
+    bl _av_findbar_hide
     mov x0, x19
     bl Lvis_first
     mov x20, x0
 2:  cbz x20, 8f
+    // the find bar takes the bottom of its pane
     ldr x0, [x20, #P_NSVIEW]
     ldp d0, d1, [x20, #P_X]
     ldp d2, d3, [x20, #P_W]
+    bl _av_findbar_fit
+    ldr x0, [x20, #P_NSVIEW]
     MSG setFrame
     ldr x0, [x20, #P_NSVIEW]
     mov x2, #1
@@ -522,7 +540,8 @@ FUNC_BEGIN _av_tabs_layout
     cbz x0, 81f
     LDRG x2, _av_container
     MSG invalidateCursorRects
-81: bl _av_tabbar_redraw
+81: bl _av_palette_layout
+    bl _av_tabbar_redraw
 9:  ldr d10, [sp, #48]
     ldp d8, d9, [sp, #32]
     ldp x19, x20, [sp, #16]
@@ -1308,6 +1327,8 @@ Ldestroy_leaf:
     stp x19, x20, [sp, #16]
     mov x19, x0
     ldr x0, [x19, #P_NSVIEW]
+    bl _av_findbar_forget
+    ldr x0, [x19, #P_NSVIEW]
     LDRG x9, _av_focus_view
     cmp x0, x9
     b.ne 1f
@@ -1729,7 +1750,9 @@ Lsplit:
     bl _av_pane_split
     LDRG x0, _av_container
     mov x2, x21
-    MSG addSubview
+    mov x3, #NSWindowBelow
+    mov x4, #0
+    MSG addSubviewBelow
     bl _av_tabs_layout
     mov x0, x19
     mov x1, x24
@@ -1907,6 +1930,11 @@ La_table:
     .rept 4
     b La_resize
     .endr
+    b La_palette
+    b La_find
+    b La_replace
+    b La_find_next
+    b La_find_prev
 La_new:
     mov x0, #0
     bl _av_tab_open
@@ -1998,6 +2026,25 @@ La_zoom:
 La_resize:
     sub x0, x19, #A_RESIZE_LEFT
     bl Lresize
+    b La_out
+La_palette:
+    bl _av_palette_toggle
+    b La_out
+La_find:
+    mov x0, #0
+    bl _av_findbar_open
+    b La_out
+La_replace:
+    mov x0, #1
+    bl _av_findbar_open
+    b La_out
+La_find_next:
+    mov x0, #0
+    bl _av_find_step
+    b La_out
+La_find_prev:
+    mov x0, #1
+    bl _av_find_step
 La_out:
     ldr x19, [sp, #16]
     ldp x29, x30, [sp], #32

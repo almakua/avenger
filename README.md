@@ -79,6 +79,18 @@ keeps its own cursor and scroll); splitting a terminal starts a new shell in the
 directory of the running job, and a terminal split from an editor starts in the file's
 folder. A click focuses a pane; only the focused one shows a solid cursor.
 
+## Command palette and search
+
+`Ctrl-s :` (or ⇧⌘P) opens the command palette: every action plus the open tabs,
+filtered as you type (letters in order, word starts rank first), with the key bound to
+each. Arrows pick, return runs, esc closes.
+
+`Ctrl-s /` (⌘F) opens the find bar under the focused editor pane: matches are
+highlighted as you type, return/⇧return (⌘G/⇧⌘G) go to the next/previous one and the
+bar shows `3/17`. Lowercase patterns ignore case, a capital makes the search exact.
+`Ctrl-s ?` (⌥⌘F) adds a replace field: return replaces the current match and moves on,
+⌥return replaces all of them in one undo step. Esc closes the bar.
+
 ## Terminal tabs
 
 `Ctrl-s t` opens your login shell in a tab (xterm-256color: colors, alternate screen,

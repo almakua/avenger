@@ -80,6 +80,15 @@
     CFSTRDEF kD, "d"
     CFSTRDEF kShiftD, "D"
     CFSTRDEF kBracket, "]"
+    CFSTRDEF tFind, "Find..."
+    CFSTRDEF tReplace, "Find and Replace..."
+    CFSTRDEF tFindNext, "Find Next"
+    CFSTRDEF tFindPrev, "Find Previous"
+    CFSTRDEF tPalette, "Command Palette..."
+    CFSTRDEF kF, "f"
+    CFSTRDEF kG, "g"
+    CFSTRDEF kShiftG, "G"
+    CFSTRDEF kShiftP, "P"
     CFSTRDEF kW, "w"
     CFSTRDEF kO, "o"
     CFSTRDEF kComma, ","
@@ -247,6 +256,21 @@ FUNC_BEGIN _av_app_init
     ITEM x21, tCopy, copy, kC
     ITEM x21, tPaste, paste, kV
     ITEM x21, tSelectAll, selectAll, kA
+    SEPARATOR x21
+    ACTION x21, tFind, kF, A_FIND
+    mov x0, x21
+    CFSTR x1, tReplace
+    LSEL x2, avAction
+    CFSTR x3, kF
+    bl Ladd_item
+    mov x24, x0
+    mov x2, #A_REPLACE
+    MSG setTag
+    mov x0, x24
+    mov x2, #(NSEventModifierFlagCommand | NSEventModifierFlagOption)
+    MSG setKeyMask
+    ACTION x21, tFindNext, kG, A_FIND_NEXT
+    ACTION x21, tFindPrev, kShiftG, A_FIND_PREV
 
     // View > Theme > one item per flavor, tag = theme index
     mov x0, x20
@@ -309,6 +333,7 @@ FUNC_BEGIN _av_app_init
     ACTION x21, tLastTab, empty, A_LAST_TAB
 
     SEPARATOR x21
+    ACTION x21, tPalette, kShiftP, A_PALETTE
     ACTION x21, tSplitRight, kD, A_SPLIT_RIGHT
     ACTION x21, tSplitDown, kShiftD, A_SPLIT_DOWN
     ACTION x21, tNextPane, kBracket, A_NEXT_PANE
