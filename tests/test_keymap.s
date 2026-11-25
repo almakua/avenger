@@ -93,6 +93,8 @@ FUNC_BEGIN _main
     LOOKUP 34, MOD_CTRL, 'c', 0
     LOOKUP 35, 0, '9', A_TAB_9
     LOOKUP 36, 0, 'z', 0
+    LOOKUP 37, 0, 't', A_NEW_TERM
+    LOOKUP 38, MOD_SHIFT, 'T', A_NEXT_THEME
 
     // overrides from YAML, custom prefix
     LADDR x0, Lkeys

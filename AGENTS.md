@@ -5,7 +5,7 @@ AArch64 assembly. Read this first, then the module you are about to touch.
 
 ## Goals
 
-- lightweight and fast: small binary (~113 KB today), instant startup, no runtime deps
+- lightweight and fast: small binary (~132 KB today), instant startup, no runtime deps
   beyond AppKit/CoreText/libSystem
 - native AppKit GUI plus tmux-style tabs/splits driven by a prefix key (default `C-s`)
 - themes (Catppuccin Mocha default), syntax highlighting, YAML as config format and as a
@@ -38,7 +38,7 @@ Dev hooks (no screen-recording rights needed for visual checks):
 - `AV_SNAPSHOT=out.png` renders the window content to a PNG after startup and exits
 - `AV_TYPE=...` sends synthetic keys to the active tab first: printable ASCII, `\n`,
   `\b`, `0x1c..0x1f` arrows, `0x1a` undo, `0x01` select all, `0x14` next theme,
-  `0x13` Ctrl-s (prefix)
+  `0x13` Ctrl-s (prefix), `0x10` runs the run loop for 0.5 s (lets terminal output arrive)
 - `AVENGER_CONFIG_DIR=dir` uses `dir/config.yaml` and `dir/themes/` instead of
   `~/.config/avenger`
 
@@ -56,7 +56,7 @@ Dev hooks (no screen-recording rights needed for visual checks):
 - variadic C calls (`printf`, `dprintf`, `open` with mode) pass varargs on the stack;
   non-variadic stack args (e.g. NSEvent `isARepeat`/`keyCode`) use natural alignment
 - runtime classes are built with `objc_allocateClassPair` + `class_addMethod`
-  (AvAppDelegate, AvEditorView with an `st` ivar holding the View state, AvTabBar)
+  (AvAppDelegate, AvEditorView/AvTermView with an `st` ivar holding their state, AvTabBar)
 - memory: `av_pages_*` (mmap) for growable blocks, `av_arena_alloc` for small long-lived
   objects (never freed)
 - pitfalls already hit: a macro whose destination register aliases its index register
@@ -70,7 +70,8 @@ Dev hooks (no screen-recording rights needed for visual checks):
 | `main.s` | startup: app, render, editor class, config, window, one tab per argv, dev hooks |
 | `app.s` | NSApplication, delegate (actions, quit/close confirmation, reload on activate), menus |
 | `window.s` | window, theme styling, `av_theme_apply`, `av_config_apply`, reload-if-changed |
-| `tabs.s` | tab model, container view, tab bar view, `av_action` dispatch, prefix handling, open/save panels, alerts, Open Config with embedded template |
+| `tabs.s` | tab model (editor or terminal), container view, tab bar view, `av_action` dispatch, prefix handling, open/save panels, alerts, Open Config with embedded template |
+| `termview.s` | AvTermView: pty read source (CFFileDescriptor), cell drawing, keys to xterm sequences, scrollback view, selection, copy/paste |
 | `editorview.s` | AvEditorView: keys, mouse, scroll, clipboard, undo/redo hooks |
 | `render.s` | font metrics, drawRect (gutter, current line, selection, color runs, cursor), `av_fill`, `av_draw_text` |
 | `snapshot.s` | dev hooks AV_SNAPSHOT / AV_TYPE |
@@ -84,15 +85,18 @@ Dev hooks (no screen-recording rights needed for visual checks):
 | `config.s` | config.yaml load/parse/defaults, paths, mtime change detection, stderr reporting |
 | `hl.s` | lexers (generic table-driven for C/JSON/shell/Python, dedicated YAML/asm/Markdown), per-line state cache, language detection |
 | `keymap.s` | key spec parser (`C-s`, `M-x`, `D-t`, names), prefix bindings table, action names |
+| `vt.s` | terminal emulator: VT100/xterm subset parser, row-pointer grids (main/alt), scrollback ring recycling rows, replies (DA/DSR) |
+| `pty.s` | forkpty + login shell (env prepared before fork), resize, write with backpressure, busy check, reaping |
 
 Core modules (no AppKit, linked into tests): alloc buffer file doc edit theme yaml
-config hl keymap. Tests live in `tests/test_*.s` using `tests/harness.inc`.
+config hl keymap vt pty. Tests live in `tests/test_*.s` using `tests/harness.inc`.
 
 Key data layouts: `include/buffer.inc` (Buffer), `include/doc.inc` (Doc, View, undo
 record, move commands), `include/theme.inc` (color slots), `include/yaml.inc` (nodes,
-errors), `include/hl.inc` (languages, runs), `include/keymap.inc` (actions, modifiers).
+errors), `include/hl.inc` (languages, runs), `include/keymap.inc` (actions, modifiers),
+`include/vt.inc` (Vt header, modes, cell bits and color encoding).
 
-## Done (steps 1-7)
+## Done (steps 1-8)
 
 1. scaffold: Makefile, Info.plist, objc macros, themed empty window
 2. allocators, gap buffer with line index, file load/atomic save, test harness
@@ -103,17 +107,18 @@ errors), `include/hl.inc` (languages, runs), `include/keymap.inc` (actions, modi
 6. syntax highlighting for YAML, ARM64 asm, C/ObjC/C++, JSON, shell, Python, Markdown
 7. tabs: tab bar, actions, prefix keymap (default `C-s`, configurable), open/save panels,
    unsaved-changes prompts, Open Config with template
+8. terminal tabs: `vt.s` emulator (CSI cursor/erase/insert/delete, SGR 16/256/truecolor
+   as rgb555, scroll regions, alt screen 47/1047/1049, DEC line drawing, OSC titles,
+   bracketed paste, DA/DSR replies), `pty.s` login shell, AvTermView with scrollback
+   (3000 lines), selection and copy/paste; 16 `ansi_*` theme roles; prefix `t` / ⇧⌘T
 
-Verified numbers: 357 unit checks passing; 100 MB YAML opens and draws in ~0.14 s; full
+Verified numbers: 457 unit checks passing (nvim, zsh with plugins and ls colors render
+correctly in a terminal tab); 100 MB YAML opens and draws in ~0.14 s; full
 highlight state for 1.5M lines in ~79 ms; parser run on ~3000 real YAML files with no
 crashes (remaining failures are Helm/Jinja templates or genuinely invalid files).
 
 ## Next steps
 
-8. terminal tabs: `forkpty` + login shell, VT100/xterm subset parser (CSI cursor/erase,
-   SGR colors mapped to theme, alternate screen, scroll regions), cell grid + scrollback,
-   rendering via `av_draw_text`, keys forwarded except the prefix; tab kind
-   `TAB_KIND_TERMINAL`, new action + prefix key to open one
 9. pane splits (binary pane tree, focus, resize, zoom) for editors and terminals
 10. command palette (all actions by name via `av_action_name`) + find/replace
 11. YAML editing extras: inline validation markers from `yaml.s` errors (skip Helm/Jinja
@@ -130,3 +135,7 @@ crashes (remaining failures are Helm/Jinja templates or genuinely invalid files)
 - theme picked from the menu is session-only (persist it in config.yaml)
 - config errors are reported on stderr plus a beep on reload, not yet in the UI
 - tabs cannot be reordered by dragging
+- terminal: no mouse reporting (1000/1006), no bold/italic font faces (bold brightens
+  colors 0..7), wide glyphs take one cell, no reflow on resize, tab stops fixed at 8,
+  shell is always the login shell (no `shell:` option yet), cursor does not change
+  shape or show focus

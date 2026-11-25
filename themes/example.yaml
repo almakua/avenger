@@ -12,6 +12,8 @@
 #   cursor tab_bar tab_active tab_text tab_text_active accent indent_guide error warning
 #   keyword string number comment type function operator punctuation constant key
 #   label special escape tag heading link
+#   terminal: ansi_black ansi_red ansi_green ansi_yellow ansi_blue ansi_magenta ansi_cyan
+#   ansi_white and the same with ansi_bright_ (ansi_bright_black ...)
 
 base: mocha
 

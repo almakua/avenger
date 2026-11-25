@@ -12,7 +12,8 @@
 .set A_NEXT_THEME,  9
 .set A_TAB_1,       10
 .set A_TAB_9,       18
-.set A_COUNT,       19
+.set A_NEW_TERM,    19
+.set A_COUNT,       20
 
 // key binding after the prefix: [mods u32][codepoint u32][action u32][pad]
 .set KM_MODS,   0

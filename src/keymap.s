@@ -23,6 +23,7 @@ La_tab_6:       .asciz "tab_6"
 La_tab_7:       .asciz "tab_7"
 La_tab_8:       .asciz "tab_8"
 La_tab_9:       .asciz "tab_9"
+La_new_term:    .asciz "new_terminal"
 
 Lk_space:    .asciz "space"
 Lk_tab:      .asciz "tab"
@@ -52,6 +53,7 @@ Laction_names:
     .quad 0, La_new_tab, La_close_tab, La_next_tab, La_prev_tab, La_last_tab
     .quad La_open, La_open_config, La_save, La_next_theme
     .quad La_tab_1, La_tab_2, La_tab_3, La_tab_4, La_tab_5, La_tab_6, La_tab_7, La_tab_8, La_tab_9
+    .quad La_new_term
 Lkey_names:
     .quad Lk_space, ' ', Lk_tab, 9, Lk_enter, 13, Lk_return, 13, Lk_esc, 27, Lk_escape, 27
     .quad Lk_bs, 127, Lk_left, KEY_LEFT_CP, Lk_right, KEY_RIGHT_CP, Lk_up, KEY_UP_CP
@@ -71,7 +73,8 @@ Ldefaults:
     .long 0, 'o', A_OPEN, 0
     .long 0, ',', A_OPEN_CONFIG, 0
     .long 0, 's', A_SAVE, 0
-    .long 0, 't', A_NEXT_THEME, 0
+    .long 0, 't', A_NEW_TERM, 0
+    .long 0, 'T', A_NEXT_THEME, 0
     .long 0, '1', A_TAB_1, 0
     .long 0, '2', A_TAB_1 + 1, 0
     .long 0, '3', A_TAB_1 + 2, 0

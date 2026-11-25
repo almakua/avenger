@@ -63,6 +63,8 @@
     CFSTRDEF tSelectAll, "Select All"
     CFSTRDEF tView, "View"
     CFSTRDEF tNewTab, "New Tab"
+    CFSTRDEF tNewTerm, "New Terminal"
+    CFSTRDEF kShiftT, "T"
     CFSTRDEF tOpen, "Open..."
     CFSTRDEF tOpenConfig, "Open Config"
     CFSTRDEF tCloseTab, "Close Tab"
@@ -218,6 +220,7 @@ FUNC_BEGIN _av_app_init
     bl Ladd_menu
     mov x21, x0
     ACTION x21, tNewTab, kT, A_NEW_TAB
+    ACTION x21, tNewTerm, kShiftT, A_NEW_TERM
     ACTION x21, tOpen, kO, A_OPEN
     ACTION x21, tOpenConfig, kComma, A_OPEN_CONFIG
     SEPARATOR x21

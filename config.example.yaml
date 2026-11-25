@@ -19,9 +19,10 @@ tab_width: 4
 prefix: C-s
 
 # keys pressed after the prefix; an empty value unbinds an action
-# defaults: new_tab c, close_tab x, next_tab n, prev_tab p, last_tab l, open o,
-# open_config ",", save s, next_theme t, tab_1..tab_9 1..9
+# defaults: new_tab c, new_terminal t, close_tab x, next_tab n, prev_tab p, last_tab l,
+# open o, open_config ",", save s, next_theme T, tab_1..tab_9 1..9
 # command+1..9 and the menu shortcuts work without the prefix
+# pressing the prefix twice sends it to the tab (C-s C-s gives a terminal ^S)
 keys:
   new_tab: c
   close_tab: x

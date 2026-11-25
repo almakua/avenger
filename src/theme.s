@@ -98,6 +98,29 @@ Lslot_map:
     .byte P_TEAL, 255        // tag, anchor
     .byte P_RED, 255         // heading
     .byte P_LAVENDER, 255    // link
+    // terminal, the Catppuccin terminal ports
+    .byte P_SURFACE1, 255    // black
+    .byte P_RED, 255
+    .byte P_GREEN, 255
+    .byte P_YELLOW, 255
+    .byte P_BLUE, 255
+    .byte P_PINK, 255        // magenta
+    .byte P_TEAL, 255        // cyan
+    .byte P_SUBTEXT1, 255    // white
+    .byte P_SURFACE2, 255    // bright black
+    .byte P_RED, 255
+    .byte P_GREEN, 255
+    .byte P_YELLOW, 255
+    .byte P_BLUE, 255
+    .byte P_PINK, 255
+    .byte P_TEAL, 255
+    .byte P_SUBTEXT0, 255    // bright white
+    // light flavors swap the grays so black stays dark: (slot, palette index)
+Lslot_light:
+    .byte T_ANSI_IDX + 0, P_SUBTEXT1
+    .byte T_ANSI_IDX + 7, P_SURFACE2
+    .byte T_ANSI_IDX + 8, P_SUBTEXT0
+    .byte T_ANSI_IDX + 15, P_SURFACE1
 
     .section __TEXT,__cstring,cstring_literals
 Ln_latte:     .asciz "Catppuccin Latte"
@@ -175,6 +198,22 @@ Ls_escape:     .asciz "escape"
 Ls_tag:        .asciz "tag"
 Ls_heading:    .asciz "heading"
 Ls_link:       .asciz "link"
+La_black:      .asciz "ansi_black"
+La_red:        .asciz "ansi_red"
+La_green:      .asciz "ansi_green"
+La_yellow:     .asciz "ansi_yellow"
+La_blue:       .asciz "ansi_blue"
+La_magenta:    .asciz "ansi_magenta"
+La_cyan:       .asciz "ansi_cyan"
+La_white:      .asciz "ansi_white"
+La_bblack:     .asciz "ansi_bright_black"
+La_bred:       .asciz "ansi_bright_red"
+La_bgreen:     .asciz "ansi_bright_green"
+La_byellow:    .asciz "ansi_bright_yellow"
+La_bblue:      .asciz "ansi_bright_blue"
+La_bmagenta:   .asciz "ansi_bright_magenta"
+La_bcyan:      .asciz "ansi_bright_cyan"
+La_bwhite:     .asciz "ansi_bright_white"
 
     .section __DATA,__const
     .p2align 3
@@ -194,6 +233,9 @@ Lslot_names:
     .quad Ls_number, Ls_comment, Ls_type, Ls_function, Ls_operator, Ls_punct
     .quad Ls_constant, Ls_key, Ls_label, Ls_special, Ls_escape, Ls_tag
     .quad Ls_heading, Ls_link
+    .quad La_black, La_red, La_green, La_yellow, La_blue, La_magenta, La_cyan, La_white
+    .quad La_bblack, La_bred, La_bgreen, La_byellow, La_bblue, La_bmagenta, La_bcyan
+    .quad La_bwhite
 
     .zerofill __DATA,__bss,_av_theme,T_SIZE,4
     .globl _av_theme
@@ -232,35 +274,64 @@ Lcopy_palette:
 // void resolve(void): working palette + slot map -> _av_theme
     .p2align 2
 Lresolve:
-    LADDR x1, _av_palette
-    LADDR x2, Lslot_map
-    LADDR x3, _av_theme
-    mov x4, #0
-    mov w9, #255
-    ucvtf d7, w9
-1:  cmp x4, #T_SLOTS
-    b.hs 2f
-    ldrb w5, [x2], #1
-    ldrb w6, [x2], #1
-    add x5, x5, x5, lsl #1
-    add x5, x1, x5
-    ldrb w7, [x5]
-    ucvtf d0, w7
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    LADDR x19, Lslot_map
+    mov x20, #0
+1:  mov x0, x20
+    ldrb w1, [x19], #1
+    ldrb w2, [x19], #1
+    bl Lset_slot
+    add x20, x20, #1
+    cmp x20, #T_SLOTS
+    b.lo 1b
+    // light base (r + g + b > 384): dark grays for black, light ones for white
+    LADDR x9, _av_palette
+    add x9, x9, #(P_BASE * 3)
+    ldrb w10, [x9]
+    ldrb w11, [x9, #1]
+    ldrb w12, [x9, #2]
+    add w10, w10, w11
+    add w10, w10, w12
+    cmp w10, #384
+    b.ls 3f
+    LADDR x19, Lslot_light
+    mov x20, #4
+2:  ldrb w0, [x19], #1
+    ldrb w1, [x19], #1
+    mov w2, #255
+    bl Lset_slot
+    subs x20, x20, #1
+    b.ne 2b
+3:  ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// void set_slot(size_t slot, size_t palette_index, u32 alpha)
+    .p2align 2
+Lset_slot:
+    LADDR x9, _av_palette
+    add x1, x1, x1, lsl #1
+    add x9, x9, x1
+    LADDR x10, _av_theme
+    add x10, x10, x0, lsl #5
+    mov w11, #255
+    ucvtf d7, w11
+    ldrb w11, [x9]
+    ucvtf d0, w11
     fdiv d0, d0, d7
-    ldrb w7, [x5, #1]
-    ucvtf d1, w7
+    ldrb w11, [x9, #1]
+    ucvtf d1, w11
     fdiv d1, d1, d7
-    ldrb w7, [x5, #2]
-    ucvtf d2, w7
+    ldrb w11, [x9, #2]
+    ucvtf d2, w11
     fdiv d2, d2, d7
-    ucvtf d3, w6
+    ucvtf d3, w2
     fdiv d3, d3, d7
-    stp d0, d1, [x3]
-    stp d2, d3, [x3, #16]
-    add x3, x3, #T_SLOT
-    add x4, x4, #1
-    b 1b
-2:  ret
+    stp d0, d1, [x10]
+    stp d2, d3, [x10, #16]
+    ret
 
 // void store_rgba(double *slot, u32 rrggbbaa)
     .p2align 2

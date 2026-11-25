@@ -47,6 +47,7 @@ tab bar (click, `×` to close, `+` for a new one), the menus, or the prefix key:
 | after `Ctrl-s` | action        | menu / direct  |
 |----------------|---------------|----------------|
 | `c`            | new tab       | ⌘T             |
+| `t`            | new terminal  | ⇧⌘T            |
 | `x`            | close tab     | ⌘W             |
 | `n` / `p`      | next / prev   | ⌥⌘→ / ⌥⌘←      |
 | `l`            | last used tab |                |
@@ -54,9 +55,19 @@ tab bar (click, `×` to close, `+` for a new one), the menus, or the prefix key:
 | `o`            | open file     | ⌘O             |
 | `,`            | open config   | ⌘,             |
 | `s`            | save          | ⌘S             |
-| `t`            | next theme    | ⌥⌘T            |
+| `T`            | next theme    | ⌥⌘T            |
 
-`prefix:` and `keys:` in config.yaml change them; `Esc` cancels a pending prefix.
+`prefix:` and `keys:` in config.yaml change them; `Esc` cancels a pending prefix and
+pressing the prefix twice sends it to the tab.
+
+## Terminal tabs
+
+`Ctrl-s t` opens your login shell in a tab (xterm-256color: colors, alternate screen,
+scroll regions, bracketed paste, titles). The wheel scrolls back through 3000 lines
+(or sends arrows inside full-screen programs), drag or double/triple click to select,
+⌘C/⌘V to copy and paste. ⌥ composes characters as usual, ⌥←/⌥→ and ⌥⌫ work on words.
+The tab closes when the shell exits; closing it while a job runs asks first. The 16
+terminal colors are theme roles (`ansi_red`, `ansi_bright_black`, ...).
 
 ## Syntax highlighting
 

@@ -70,7 +70,7 @@ FUNC_BEGIN _av_snapshot
 
 // void av_snapshot_type(NSView *unused, const char *keys), synthetic ASCII key events to the active tab
 // \n return, \b backspace, 0x1c..0x1f left/right/up/down, 0x1a undo:, 0x01 selectAll:, 0x14 next theme,
-// 0x13 control-s (the default prefix)
+// 0x13 control-s (the default prefix), 0x10 runs the run loop for 0.5 s (terminal output)
 FUNC_BEGIN _av_snapshot_type
     stp x29, x30, [sp, #-64]!
     mov x29, sp
@@ -82,7 +82,14 @@ FUNC_BEGIN _av_snapshot_type
     mov x20, x1
 1:  ldrb w21, [x20], #1
     cbz w21, 9f
-    cmp w21, #0x1a
+    cmp w21, #0x10
+    b.ne 11f
+    LEXTERN x0, _kCFRunLoopDefaultMode
+    fmov d0, #0.5
+    mov w1, #0
+    bl _CFRunLoopRunInMode
+    b 1b
+11: cmp w21, #0x1a
     b.ne 2f
     bl _av_tabs_current_view
     mov x2, #0

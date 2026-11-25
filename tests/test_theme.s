@@ -74,6 +74,8 @@ FUNC_BEGIN _main
     CHECK_RGB 1, T_BG, 0x1e, 0x1e, 0x2e
     CHECK_RGB 4, T_TEXT, 0xcd, 0xd6, 0xf4
     CHECK_RGB 7, S_KEYWORD, 0xcb, 0xa6, 0xf7
+    CHECK_RGB 80, T_ANSI, 0x45, 0x47, 0x5a
+    CHECK_RGB 83, (T_ANSI + 6 * T_SLOT), 0x94, 0xe2, 0xd5
     CHANNEL T_BG, 3
     CHECK 10, 255
     CHANNEL T_SEL, 3
@@ -90,6 +92,10 @@ FUNC_BEGIN _main
     CHECK_RGB 17, S_STRING, 0x40, 0xa0, 0x2b
     bl _av_theme_is_light
     CHECK 20, 1
+    // terminal grays flip on light flavors: black is subtext1, bright white surface1
+    CHECK_RGB 70, T_ANSI, 0x5c, 0x5f, 0x77
+    CHECK_RGB 73, (T_ANSI + 15 * T_SLOT), 0xbc, 0xc0, 0xcc
+    CHECK_RGB 76, (T_ANSI + 1 * T_SLOT), 0xd2, 0x0f, 0x39
 
     // frappe and macchiato bases
     mov x0, #THEME_FRAPPE

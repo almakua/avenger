@@ -21,6 +21,7 @@ FUNC_BEGIN _main
     bl _av_app_init
     bl _av_render_init
     bl _av_editor_class_init
+    bl _av_term_class_init
     bl _av_config_load
     bl _av_config_apply
 

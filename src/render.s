@@ -9,6 +9,7 @@
 
 .set DISPLAY_MAX, 8192
 .set ENC_LATIN1,  0x0201
+.set RGB_COLORS,  32768
 
 // drawRect locals
 .set L_Y0,     160
@@ -43,6 +44,8 @@ Lfont_warn:
     .zerofill __DATA,__bss,_av_base_off,8,3
     .zerofill __DATA,__bss,_av_line_scratch,(DISPLAY_MAX + 32),4
     .zerofill __DATA,__bss,_av_attrs,(T_SLOTS * 8),3
+    // terminal colors outside the theme, by rgb555, created on first use
+    .zerofill __DATA,__bss,_av_rgb_attrs,(RGB_COLORS * 8),3
     .globl _av_attrs
     .globl _av_line_h
     .globl _av_adv
@@ -181,8 +184,58 @@ FUNC_BEGIN _av_render_rebuild_attrs
     add x19, x19, #1
     cmp x19, #T_SLOTS
     b.lo 1b
+    // the font may have changed, cached terminal colors start over
+    mov x19, #0
+    LADDR x20, _av_rgb_attrs
+3:  ldr x0, [x20, x19, lsl #3]
+    cbz x0, 4f
+    str xzr, [x20, x19, lsl #3]
+    bl _CFRelease
+4:  add x19, x19, #1
+    cmp x19, #RGB_COLORS
+    b.lo 3b
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
+    ret
+
+// CFDictionaryRef av_render_rgb_attrs(u32 rgb555)
+FUNC_BEGIN _av_render_rgb_attrs
+    and x0, x0, #0x7fff
+    LADDR x9, _av_rgb_attrs
+    ldr x10, [x9, x0, lsl #3]
+    cbz x10, 1f
+    mov x0, x10
+    ret
+1:  stp x29, x30, [sp, #-64]!
+    mov x29, sp
+    str x19, [sp, #16]
+    mov x19, x0
+    add x1, sp, #32
+    bl _av_rgb555_rgba
+    add x0, sp, #32
+    bl Lmake_attrs
+    LADDR x9, _av_rgb_attrs
+    str x0, [x9, x19, lsl #3]
+    ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #64
+    ret
+
+// void av_rgb555_rgba(u32 rgb555, double *rgba), opaque
+FUNC_BEGIN _av_rgb555_rgba
+    mov w9, #31
+    ucvtf d7, w9
+    ubfx w9, w0, #10, #5
+    ucvtf d0, w9
+    fdiv d0, d0, d7
+    ubfx w9, w0, #5, #5
+    ucvtf d1, w9
+    fdiv d1, d1, d7
+    and w9, w0, #31
+    ucvtf d2, w9
+    fdiv d2, d2, d7
+    fmov d3, #1.0
+    stp d0, d1, [x1]
+    stp d2, d3, [x1, #16]
     ret
 
 // CFDictionaryRef make_attrs(const double *rgba): {font, foreground color}

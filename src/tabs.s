@@ -15,6 +15,7 @@
 .set TAB_KIND,   24
 .set TAB_SIZE,   32
 .set TAB_KIND_EDITOR, 1
+.set TAB_KIND_TERMINAL, 2      // TAB_DOC is 0, TAB_VIEW is the Term
 
 .set NSModalResponseOK, 1
 .set ALERT_FIRST,  1000
@@ -87,6 +88,10 @@
     CFSTRDEF unsaved, "You have unsaved changes."
     CFSTRDEF quitInfo, "Unsaved changes will be lost if you quit."
     CFSTRDEF bQuit, "Quit Anyway"
+    CFSTRDEF askKill, "Terminate the running process?"
+    CFSTRDEF bTerminate, "Terminate"
+    CFSTRDEF running, "Processes are still running in terminal tabs."
+    CFSTRDEF runningInfo, "They will be terminated if you quit."
 
     .section __TEXT,__cstring,cstring_literals
 Ltb_name:     .asciz "AvTabBar"
@@ -304,6 +309,7 @@ FUNC_BEGIN _av_tab_find
     b.hs 3f
     TAB x9, x20
     ldr x9, [x9, #TAB_DOC]
+    cbz x9, 2f
     ldr x0, [x9, #DOC_PATH]
     cbz x0, 2f
     mov x1, x19
@@ -374,6 +380,78 @@ FUNC_BEGIN _av_tab_open
     ldp x29, x30, [sp], #48
     ret
 
+// long av_tab_open_term(void): new tab running the login shell, -1 on failure
+FUNC_BEGIN _av_tab_open_term
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    LDRG x9, _av_ntabs
+    cmp x9, #MAX_TABS
+    b.hs 8f
+    bl _av_term_create
+    cbz x0, 8f
+    mov x21, x0
+    mov x2, #(NSViewWidthSizable | NSViewHeightSizable)
+    MSG setAutoresizingMask
+    mov x0, #TAB_SIZE
+    bl _av_arena_alloc
+    mov x22, x0
+    str x21, [x22, #TAB_NSVIEW]
+    mov x9, #TAB_KIND_TERMINAL
+    str x9, [x22, #TAB_KIND]
+    mov x0, x21
+    bl _av_term_state
+    mov x20, x0
+    str x20, [x22, #TAB_VIEW]
+    LDRG x9, _av_ntabs
+    LADDR x10, _av_tabs
+    str x22, [x10, x9, lsl #3]
+    add x19, x9, #1
+    STRG x19, _av_ntabs, x10
+    sub x19, x19, #1
+    // activating lays the view out, so the shell starts with the right size
+    mov x0, x19
+    bl _av_tab_activate
+    mov x0, x20
+    bl _av_term_start
+    cbnz x0, 7f
+    mov x0, x19
+    b 9f
+7:  mov x0, x19
+    bl _av_tab_close
+8:  bl _NSBeep
+    mov x0, #-1
+9:  ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
+
+// void av_tabs_term_exited(Term *t): the shell is gone, close its tab if still open
+FUNC_BEGIN _av_tabs_term_exited
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    mov x19, x0
+    mov x20, #0
+1:  LDRG x9, _av_ntabs
+    cmp x20, x9
+    b.hs 9f
+    TAB x10, x20
+    ldr x11, [x10, #TAB_DOC]
+    cbnz x11, 2f
+    ldr x11, [x10, #TAB_VIEW]
+    cmp x11, x19
+    b.ne 2f
+    mov x0, x20
+    bl _av_tab_close
+    b 9f
+2:  add x20, x20, #1
+    b 1b
+9:  ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
 // void av_tab_activate(size_t i)
 FUNC_BEGIN _av_tab_activate
     stp x29, x30, [sp, #-32]!
@@ -419,7 +497,7 @@ FUNC_BEGIN _av_tabs_update_window
     cbz x19, 9f
     bl _av_tabs_current_doc
     mov x20, x0
-    cbz x20, 9f
+    cbz x20, 3f
     ldr x2, [x20, #DOC_PATH]
     cbz x2, 1f
     CLS x0, NSString
@@ -437,6 +515,27 @@ FUNC_BEGIN _av_tabs_update_window
 2:  ldr x9, [x20, #BUF_FLAGS]
     and x2, x9, #BUF_DIRTY
     mov x0, x19
+    MSG setDocumentEdited
+    b 9f
+    // terminal: the program's title, no proxy icon
+3:  LDRG x9, _av_tab_cur
+    LDRG x10, _av_ntabs
+    cmp x9, x10
+    b.hs 9f
+    TAB x10, x9
+    ldr x0, [x10, #TAB_VIEW]
+    bl _av_term_title
+    mov x2, x0
+    CLS x0, NSString
+    MSG stringWithUTF8String
+    mov x2, x0
+    mov x0, x19
+    MSG setTitle
+    mov x0, x19
+    CFSTR x2, empty
+    MSG setRepresentedFilename
+    mov x0, x19
+    mov x2, #0
     MSG setDocumentEdited
 9:  ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
@@ -505,6 +604,16 @@ Ldisplay_name:
     ldp x29, x30, [sp], #32
     ret
 
+// const char *tab_name(Tab *t): file name, or the terminal title
+    .p2align 2
+Ltab_name:
+    ldr x9, [x0, #TAB_DOC]
+    cbz x9, 1f
+    mov x0, x9
+    b Ldisplay_name
+1:  ldr x0, [x0, #TAB_VIEW]
+    b _av_term_title
+
 // const char *save_panel(void): chosen path (arena copy) or NULL
     .p2align 2
 Lsave_panel:
@@ -538,6 +647,7 @@ FUNC_BEGIN _av_tab_save
     b.hs 8f
     TAB x19, x0
     ldr x20, [x19, #TAB_DOC]
+    cbz x20, 7f
     ldr x21, [x20, #DOC_PATH]
     cbnz x21, 1f
     bl Lsave_panel
@@ -579,6 +689,7 @@ FUNC_BEGIN _av_tab_close
     b.hs Lc_cancel
     TAB x20, x19
     ldr x21, [x20, #TAB_DOC]
+    cbz x21, 11f
     ldr x9, [x21, #BUF_FLAGS]
     tbz x9, #0, 2f
     mov x0, x21
@@ -599,12 +710,30 @@ FUNC_BEGIN _av_tab_close
     mov x0, x19
     bl _av_tab_save
     cbnz x0, Lc_cancel
+    b 2f
+    // terminal: ask only when a job other than the shell is running
+11: ldr x0, [x20, #TAB_VIEW]
+    bl _av_term_busy
+    cbz w0, 2f
+    CFSTR x0, askKill
+    mov x1, #0
+    CFSTR x2, bTerminate
+    CFSTR x3, bCancel
+    mov x4, #0
+    bl Lalert
+    cmp x0, #ALERT_FIRST
+    b.ne Lc_cancel
 2:  ldr x0, [x20, #TAB_NSVIEW]
     MSG removeFromSuperview
     ldr x0, [x20, #TAB_NSVIEW]
     MSG release
+    cbz x21, 21f
     mov x0, x21
     bl _av_doc_free
+    b 22f
+21: ldr x0, [x20, #TAB_VIEW]
+    bl _av_term_destroy
+22:
     // remove slot i
     LDRG x22, _av_ntabs
     LADDR x10, _av_tabs
@@ -657,7 +786,7 @@ Lc_cancel:
     ldp x29, x30, [sp], #64
     ret
 
-// int av_tabs_confirm_quit(void): 1 when nothing is dirty or the user accepts losing changes
+// int av_tabs_confirm_quit(void): 1 when nothing is dirty or running, or the user accepts
 FUNC_BEGIN _av_tabs_confirm_quit
     stp x29, x30, [sp, #-32]!
     mov x29, sp
@@ -667,14 +796,22 @@ FUNC_BEGIN _av_tabs_confirm_quit
     cmp x19, x9
     b.hs 3f
     TAB x9, x19
-    ldr x9, [x9, #TAB_DOC]
-    ldr x9, [x9, #BUF_FLAGS]
-    tbnz x9, #0, 2f
-    add x19, x19, #1
+    ldr x10, [x9, #TAB_DOC]
+    cbz x10, 11f
+    ldr x10, [x10, #BUF_FLAGS]
+    tbnz x10, #0, 2f
+    b 12f
+11: ldr x0, [x9, #TAB_VIEW]
+    bl _av_term_busy
+    cbnz w0, 21f
+12: add x19, x19, #1
     b 1b
 2:  CFSTR x0, unsaved
     CFSTR x1, quitInfo
-    CFSTR x2, bQuit
+    b 22f
+21: CFSTR x0, running
+    CFSTR x1, runningInfo
+22: CFSTR x2, bQuit
     CFSTR x3, bCancel
     mov x4, #0
     bl Lalert
@@ -823,6 +960,7 @@ La_table:
     .rept 9
     b La_tab
     .endr
+    b La_term
 La_new:
     mov x0, #0
     bl _av_tab_open
@@ -874,6 +1012,9 @@ La_theme:
 La_tab:
     sub x0, x19, #A_TAB_1
     bl _av_tab_activate
+    b La_out
+La_term:
+    bl _av_tab_open_term
 La_out:
     ldr x19, [sp, #16]
     ldp x29, x30, [sp], #32
@@ -903,7 +1044,16 @@ FUNC_BEGIN _av_keymap_handle
     cbz x9, 2f
     STRG xzr, _av_prefix_pending, x9
     bl _av_tabbar_redraw
-    cmp w22, #KEY_ESC_CODE
+    // the prefix twice goes through to the view (a terminal gets C-s)
+    and x9, x20, #MOD_CHORD
+    LDRG x10, _av_prefix_mods
+    and x10, x10, #MOD_CHORD
+    cmp x9, x10
+    b.ne 11f
+    LDRG x10, _av_prefix_cp
+    cmp x21, x10
+    b.eq 8f
+11: cmp w22, #KEY_ESC_CODE
     b.eq 7f
     mov x0, x20
     mov x1, x21
@@ -972,9 +1122,8 @@ Ltab_title:
     stp x21, x22, [sp, #32]
     mov x20, x1
     mov x21, x2
-    TAB x9, x0
-    ldr x0, [x9, #TAB_DOC]
-    bl Ldisplay_name
+    TAB x0, x0
+    bl Ltab_name
     mov x19, x0
     bl _strlen
     mov x22, x0
@@ -1139,8 +1288,9 @@ Ltb_draw:
     // close marker, a dot while there are unsaved changes
     TAB x9, x20
     ldr x9, [x9, #TAB_DOC]
+    cbz x9, 40f
     ldr x9, [x9, #BUF_FLAGS]
-    LADDR x0, Ls_close
+40: LADDR x0, Ls_close
     ATTRS x2, T_TAB_TEXT
     tbz x9, #0, 41f
     LADDR x0, Ls_dirty

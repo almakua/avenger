@@ -39,7 +39,11 @@
 .set S_HEADING,     30 * T_SLOT
 .set S_LINK,        31 * T_SLOT
 
-.set T_SLOTS, 32
+// terminal colors 0..15 (black red green yellow blue magenta cyan white, then bright)
+.set T_ANSI_IDX,    32
+.set T_ANSI,        T_ANSI_IDX * T_SLOT
+
+.set T_SLOTS, 48
 .set T_SIZE,  T_SLOTS * T_SLOT
 
 .set THEME_LATTE,     0
