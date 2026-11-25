@@ -5,6 +5,7 @@
 .include "consts.inc"
 .include "buffer.inc"
 .include "doc.inc"
+.include "keymap.inc"
 
 .set NSUTF8StringEncoding, 4
 
@@ -213,7 +214,8 @@ Lrefresh:
     ldr x11, [x10, #BUF_FLAGS]
     and x2, x11, #BUF_DIRTY
     MSG setDocumentEdited
-1:  ldr x19, [sp, #16]
+1:  bl _av_tabbar_redraw
+    ldr x19, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
 
@@ -364,6 +366,9 @@ Lkey_down:
     mov x19, x0
     mov x21, x2
     STATE x20, x19
+    mov x0, x21
+    bl _av_keymap_handle
+    cbnz w0, Lk_out
     mov x0, x21
     MSG modifierFlags
     mov x22, x0
@@ -759,21 +764,13 @@ Ledit_done:
     bl Lrefresh
     IMP_LEAVE
 
-// saveDocument:, untitled buffers just beep until the save panel lands
+// saveDocument:, the active tab is this view
     .p2align 2
 Lsave:
-    IMP_ENTER
-    mov x19, x0
-    STATE x20, x19
-    ldr x21, [x20, #V_DOC]
-    ldr x1, [x21, #DOC_PATH]
-    cbz x1, 1f
-    mov x0, x21
-    bl _av_buf_save
-    cbnz x0, 1f
-    bl _av_config_reload_if_changed
-    mov x0, x19
-    bl Lrefresh
-    IMP_LEAVE
-1:  bl _NSBeep
-    IMP_LEAVE
+    mov x0, #A_SAVE
+    b _av_action
+
+// View *av_editor_state(NSView *view)
+FUNC_BEGIN _av_editor_state
+    STATE x0, x0
+    ret

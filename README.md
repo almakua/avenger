@@ -3,7 +3,7 @@
 A small, fast, native macOS text editor written entirely in AArch64 assembly.
 
 - native AppKit window, tab bar, menus and command palette
-- tmux-style tabs and splits driven by a prefix key (`Ctrl-b`)
+- tmux-style tabs and splits driven by a prefix key (`Ctrl-s`, configurable)
 - themes, Catppuccin Mocha by default
 - syntax highlighting, first-class YAML editing
 - configuration in YAML (`~/.config/avenger/config.yaml`)
@@ -38,6 +38,25 @@ errors are printed to stderr with the line number and the previous config stays 
 Themes: the four Catppuccin flavors are built in (`mocha`, `macchiato`, `frappe`,
 `latte`) and can be switched from View > Theme (or ⌥⌘T). Any other `theme:` name loads
 `~/.config/avenger/themes/<name>.yaml`, see `themes/example.yaml`.
+
+## Tabs and keys
+
+Every file opens in a tab (`avenger a.yaml b.s` opens two). Tabs are driven from the
+tab bar (click, `×` to close, `+` for a new one), the menus, or the prefix key:
+
+| after `Ctrl-s` | action        | menu / direct  |
+|----------------|---------------|----------------|
+| `c`            | new tab       | ⌘T             |
+| `x`            | close tab     | ⌘W             |
+| `n` / `p`      | next / prev   | ⌥⌘→ / ⌥⌘←      |
+| `l`            | last used tab |                |
+| `1`..`9`       | go to tab     | ⌘1..⌘9         |
+| `o`            | open file     | ⌘O             |
+| `,`            | open config   | ⌘,             |
+| `s`            | save          | ⌘S             |
+| `t`            | next theme    | ⌥⌘T            |
+
+`prefix:` and `keys:` in config.yaml change them; `Esc` cancels a pending prefix.
 
 ## Syntax highlighting
 

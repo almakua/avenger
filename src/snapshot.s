@@ -68,14 +68,15 @@ FUNC_BEGIN _av_snapshot
     ldp x29, x30, [sp], #80
     ret
 
-// void av_snapshot_type(NSView *view, const char *keys), synthetic ASCII key events
-// \n return, \b backspace, 0x1c..0x1f left/right/up/down, 0x1a undo:, 0x01 selectAll:, 0x14 next theme
+// void av_snapshot_type(NSView *unused, const char *keys), synthetic ASCII key events to the active tab
+// \n return, \b backspace, 0x1c..0x1f left/right/up/down, 0x1a undo:, 0x01 selectAll:, 0x14 next theme,
+// 0x13 control-s (the default prefix)
 FUNC_BEGIN _av_snapshot_type
     stp x29, x30, [sp, #-64]!
     mov x29, sp
     stp x19, x20, [sp, #16]
     stp x21, x22, [sp, #32]
-    str x23, [sp, #48]
+    stp x23, x24, [sp, #48]
     sub sp, sp, #16
     mov x19, x0
     mov x20, x1
@@ -83,7 +84,7 @@ FUNC_BEGIN _av_snapshot_type
     cbz w21, 9f
     cmp w21, #0x1a
     b.ne 2f
-    mov x0, x19
+    bl _av_tabs_current_view
     mov x2, #0
     MSG undo
     b 1b
@@ -97,13 +98,20 @@ FUNC_BEGIN _av_snapshot_type
     b 1b
 5:  cmp w21, #0x01
     b.ne 3f
-    mov x0, x19
+    bl _av_tabs_current_view
     mov x2, #0
     MSG selectAll
     b 1b
     // key code from the control byte, AppKit dispatch in keyDown: is by key code
 3:  mov x22, #0
-    cmp w21, #10
+    mov x24, #0
+    cmp w21, #0x13
+    b.ne 31f
+    mov x24, #0x40000
+    mov w21, #'s'
+    mov x22, #1
+    b 4f
+31: cmp w21, #10
     mov x9, #36
     csel x22, x9, x22, eq
     mov w9, #13
@@ -134,21 +142,23 @@ FUNC_BEGIN _av_snapshot_type
     mov x2, #NSEventTypeKeyDown
     movi d0, #0
     movi d1, #0
-    mov x3, #0
+    mov x3, x24
     movi d2, #0
     mov x4, #0
     mov x5, #0
     mov x6, x23
     mov x7, x23
     MSG keyEvent
-    mov x2, x0
-    mov x0, x19
+    // like the real first responder: whichever tab is active now
+    mov x19, x0
+    bl _av_tabs_current_view
+    mov x2, x19
     MSG keyDown
     mov x0, x23
     MSG release
     b 1b
 9:  add sp, sp, #16
-    ldr x23, [sp, #48]
+    ldp x23, x24, [sp, #48]
     ldp x21, x22, [sp, #32]
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #64

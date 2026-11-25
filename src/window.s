@@ -27,6 +27,7 @@
     SELDEF stringWithUTF8String, "stringWithUTF8String:"
     SELDEF setTitleWithFile, "setTitleWithRepresentedFilename:"
     SELDEF contentView, "contentView"
+    SELDEF setDelegate, "setDelegate:"
     SELDEF setNeedsDisplay, "setNeedsDisplay:"
 
     CFSTRDEF title, "Avenger"
@@ -35,14 +36,11 @@
     .globl _av_window
 
     .text
-// void av_window_create(NSView *content, const char *path), path may be NULL
+// void av_window_create(void): themed window whose content is the tab container
 FUNC_BEGIN _av_window_create
-    stp x29, x30, [sp, #-48]!
+    stp x29, x30, [sp, #-32]!
     mov x29, sp
     stp x19, x20, [sp, #16]
-    str x21, [sp, #32]
-    mov x20, x0
-    mov x21, x1
 
     CLS x0, NSWindow
     MSG alloc
@@ -63,14 +61,10 @@ FUNC_BEGIN _av_window_create
     mov x0, x19
     CFSTR x2, title
     MSG setTitle
-    cbz x21, 1f
-    CLS x0, NSString
-    mov x2, x21
-    MSG stringWithUTF8String
-    mov x2, x0
+    // the app delegate also decides whether the window may close with unsaved tabs
     mov x0, x19
-    MSG setTitleWithFile
-1:
+    LDRG x2, _av_delegate
+    MSG setDelegate
 
     mov x0, x19
     bl Lwindow_style
@@ -83,21 +77,19 @@ FUNC_BEGIN _av_window_create
     ldr d1, Lmin_h
     MSG setMinSize
     mov x0, x19
-    mov x2, x20
-    MSG setContentView
-    mov x0, x19
-    mov x2, x20
-    MSG makeFirstResponder
+    bl _av_tabs_init
     mov x0, x19
     MSG center
-    mov x0, x19
-    mov x2, #0
-    MSG makeKey
-
-    ldr x21, [sp, #32]
     ldp x19, x20, [sp, #16]
-    ldp x29, x30, [sp], #48
+    ldp x29, x30, [sp], #32
     ret
+
+// void av_window_show(void)
+FUNC_BEGIN _av_window_show
+    LDRG x0, _av_window
+    mov x2, #0
+    LSEL x1, makeKey
+    b _objc_msgSend
 
     .p2align 3
 Lwin_w:  .double 1100.0
@@ -145,10 +137,13 @@ FUNC_BEGIN _av_theme_apply
     ldp x29, x30, [sp], #16
     ret
 
-// void av_config_apply(void): font and theme from the loaded config
+// void av_config_apply(void): keys, font and theme from the loaded config
 FUNC_BEGIN _av_config_apply
     stp x29, x30, [sp, #-16]!
     mov x29, sp
+    LDRG x0, _av_cfg_prefix
+    LDRG x1, _av_cfg_keys
+    bl _av_keymap_configure
     LDRG x0, _av_cfg_font
     LDRD d0, _av_cfg_font_size
     bl _av_render_set_font
@@ -194,8 +189,10 @@ Ltheme_refresh:
     cbz x19, 1f
     mov x0, x19
     bl Lwindow_style
-    mov x0, x19
-    MSG contentView
+    // the font may have changed: tab bar height, then the active editor
+    bl _av_tabs_layout
+    bl _av_tabs_current_view
+    cbz x0, 1f
     mov x2, #1
     MSG setNeedsDisplay
 1:  ldr x19, [sp, #16]

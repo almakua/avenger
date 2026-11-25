@@ -4,6 +4,7 @@
 .include "objc.inc"
 .include "consts.inc"
 .include "theme.inc"
+.include "keymap.inc"
 
     CLASSREF NSApplication
     CLASSREF NSObject
@@ -28,7 +29,6 @@
     // menu actions, resolved through the responder chain
     SELDEF terminate, "terminate:"
     SELDEF hide, "hide:"
-    SELDEF saveDocument, "saveDocument:"
     SELDEF undo, "undo:"
     SELDEF redo, "redo:"
     SELDEF cut, "cut:"
@@ -38,6 +38,10 @@
     SELDEF selectTheme, "selectTheme:"
     SELDEF nextTheme, "nextTheme:"
     SELDEF didBecomeActive, "applicationDidBecomeActive:"
+    SELDEF avAction, "avAction:"
+    SELDEF shouldTerminate2, "applicationShouldTerminate:"
+    SELDEF windowShouldClose, "windowShouldClose:"
+    SELDEF separatorItem, "separatorItem"
     SELDEF tag, "tag"
     SELDEF setTag, "setTag:"
     SELDEF setState, "setState:"
@@ -58,6 +62,16 @@
     CFSTRDEF tPaste, "Paste"
     CFSTRDEF tSelectAll, "Select All"
     CFSTRDEF tView, "View"
+    CFSTRDEF tNewTab, "New Tab"
+    CFSTRDEF tOpen, "Open..."
+    CFSTRDEF tOpenConfig, "Open Config"
+    CFSTRDEF tCloseTab, "Close Tab"
+    CFSTRDEF tNextTab, "Next Tab"
+    CFSTRDEF tPrevTab, "Previous Tab"
+    CFSTRDEF tLastTab, "Last Tab"
+    CFSTRDEF kW, "w"
+    CFSTRDEF kO, "o"
+    CFSTRDEF kComma, ","
     CFSTRDEF tTheme, "Theme"
     CFSTRDEF tNextTheme, "Next Theme"
     CFSTRDEF kT, "t"
@@ -78,10 +92,39 @@ Ltypes_c_at_at:
     .asciz "c@:@"
 Ltypes_v_at_at:
     .asciz "v@:@"
+Ltypes_Q_at_at:
+    .asciz "Q@:@"
+Larrow_right:
+    .asciz "\357\234\203"
+Larrow_left:
+    .asciz "\357\234\202"
 
     .zerofill __DATA,__bss,_av_app,8,3
+    .zerofill __DATA,__bss,_av_delegate,8,3
+    .zerofill __DATA,__bss,_av_quit_ok,8,3
+    .globl _av_delegate
     .zerofill __DATA,__bss,_av_theme_items,(THEME_COUNT * 8),3
     .globl _av_app
+
+// ACTION menu_reg, title, key, action id: dispatched through avAction: and av_action
+.macro ACTION menu, title, key, id
+    mov x0, \menu
+    CFSTR x1, \title
+    LSEL x2, avAction
+    CFSTR x3, \key
+    bl Ladd_item
+    mov x2, #\id
+    MSG setTag
+.endm
+
+// SEPARATOR menu_reg
+.macro SEPARATOR menu
+    CLS x0, NSMenuItem
+    MSG separatorItem
+    mov x2, x0
+    mov x0, \menu
+    MSG addItem
+.endm
 
 // ITEM menu_reg, title, action, key
 .macro ITEM menu, title, action, key
@@ -136,9 +179,25 @@ FUNC_BEGIN _av_app_init
     LADDR x3, Ltypes_v_at_at
     bl _class_addMethod
     mov x0, x20
+    LSEL x1, avAction
+    adr x2, Lav_action
+    LADDR x3, Ltypes_v_at_at
+    bl _class_addMethod
+    mov x0, x20
+    LSEL x1, shouldTerminate2
+    adr x2, Lshould_terminate_now
+    LADDR x3, Ltypes_Q_at_at
+    bl _class_addMethod
+    mov x0, x20
+    LSEL x1, windowShouldClose
+    adr x2, Lwindow_should_close
+    LADDR x3, Ltypes_c_at_at
+    bl _class_addMethod
+    mov x0, x20
     bl _objc_registerClassPair
     mov x0, x20
     MSG new
+    STRG x0, _av_delegate, x9
     mov x2, x0
     mov x0, x19
     MSG setDelegate
@@ -158,7 +217,12 @@ FUNC_BEGIN _av_app_init
     CFSTR x1, tFile
     bl Ladd_menu
     mov x21, x0
-    ITEM x21, tSave, saveDocument, kS
+    ACTION x21, tNewTab, kT, A_NEW_TAB
+    ACTION x21, tOpen, kO, A_OPEN
+    ACTION x21, tOpenConfig, kComma, A_OPEN_CONFIG
+    SEPARATOR x21
+    ACTION x21, tSave, kS, A_SAVE
+    ACTION x21, tCloseTab, kW, A_CLOSE_TAB
 
     mov x0, x20
     CFSTR x1, tEdit
@@ -201,6 +265,36 @@ FUNC_BEGIN _av_app_init
     mov x2, #(NSEventModifierFlagCommand | NSEventModifierFlagOption)
     MSG setKeyMask
 
+    // tab navigation: option-command arrows
+    SEPARATOR x21
+    LADDR x0, Larrow_right
+    bl Lnsstring
+    mov x3, x0
+    mov x0, x21
+    CFSTR x1, tNextTab
+    LSEL x2, avAction
+    bl Ladd_item
+    mov x24, x0
+    mov x2, #A_NEXT_TAB
+    MSG setTag
+    mov x0, x24
+    mov x2, #(NSEventModifierFlagCommand | NSEventModifierFlagOption)
+    MSG setKeyMask
+    LADDR x0, Larrow_left
+    bl Lnsstring
+    mov x3, x0
+    mov x0, x21
+    CFSTR x1, tPrevTab
+    LSEL x2, avAction
+    bl Ladd_item
+    mov x24, x0
+    mov x2, #A_PREV_TAB
+    MSG setTag
+    mov x0, x24
+    mov x2, #(NSEventModifierFlagCommand | NSEventModifierFlagOption)
+    MSG setKeyMask
+    ACTION x21, tLastTab, empty, A_LAST_TAB
+
     mov x0, x19
     mov x2, x20
     MSG setMainMenu
@@ -239,6 +333,44 @@ Lselect_theme:
     mov x0, x2
     MSG tag
     bl _av_theme_apply
+    ldp x29, x30, [sp], #16
+    ret
+
+// NSString *nsstring(const char *utf8)
+    .p2align 2
+Lnsstring:
+    mov x2, x0
+    CLS x0, NSString
+    LSEL x1, stringWithUTF8String
+    b _objc_msgSend
+
+// avAction:(NSMenuItem *)sender, the item's tag is the action id
+    .p2align 2
+Lav_action:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    mov x0, x2
+    MSG tag
+    bl _av_action
+    ldp x29, x30, [sp], #16
+    ret
+
+// applicationShouldTerminate:, NSTerminateNow (1) or NSTerminateCancel (0)
+    .p2align 2
+Lshould_terminate_now:
+    LDRG x9, _av_quit_ok
+    cbnz x9, 1f
+    b _av_tabs_confirm_quit
+1:  mov x0, #1
+    ret
+
+// windowShouldClose:, the quit that follows must not ask again
+    .p2align 2
+Lwindow_should_close:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    bl _av_tabs_confirm_quit
+    STRG x0, _av_quit_ok, x9
     ldp x29, x30, [sp], #16
     ret
 

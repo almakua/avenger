@@ -16,7 +16,7 @@ OBJS     := $(patsubst src/%.s,$(OBJDIR)/%.o,$(SRCS))
 INCS     := $(wildcard include/*.inc)
 
 # core modules have no AppKit dependency and link into CLI test binaries
-CORE     := alloc buffer file doc edit theme yaml config hl
+CORE     := alloc buffer file doc edit theme yaml config hl keymap
 CORE_OBJS := $(patsubst %,$(OBJDIR)/%.o,$(CORE))
 TESTS    := $(patsubst tests/%.s,$(BUILD)/%,$(wildcard tests/test_*.s))
 
@@ -27,6 +27,9 @@ all: $(EXE) $(BUNDLE)/Contents/Info.plist
 
 $(OBJDIR)/%.o: src/%.s $(INCS) | $(OBJDIR)
 	$(CC) $(ASFLAGS) -c $< -o $@
+
+# tabs.s embeds the config template
+$(OBJDIR)/tabs.o: config.example.yaml
 
 $(EXE): $(OBJS) | $(BUNDLE)/Contents/MacOS
 	$(CC) $(LDFLAGS) $(OBJS) -o $@

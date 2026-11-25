@@ -418,3 +418,22 @@ FUNC_BEGIN _av_doc_redo
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #48
     ret
+
+// void av_doc_free(Doc *d): buffer, undo log and highlight states
+FUNC_BEGIN _av_doc_free
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x19, [sp, #16]
+    mov x19, x0
+    bl _av_buf_free
+    ldr x0, [x19, #DOC_U_DATA]
+    ldr x1, [x19, #DOC_U_CAP]
+    bl _av_pages_free
+    ldr x0, [x19, #DOC_HL_STATES]
+    ldr x1, [x19, #DOC_HL_CAP]
+    bl _av_pages_free
+    stp xzr, xzr, [x19, #DOC_U_DATA]
+    stp xzr, xzr, [x19, #DOC_HL_STATES]
+    ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret

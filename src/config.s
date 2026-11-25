@@ -12,7 +12,7 @@
     .section __TEXT,__cstring,cstring_literals
 Ldef_font:    .asciz "Menlo"
 Ldef_theme:   .asciz "mocha"
-Ldef_prefix:  .asciz "C-b"
+Ldef_prefix:  .asciz "C-s"
 Lenv_dir:     .asciz "AVENGER_CONFIG_DIR"
 Lenv_home:    .asciz "HOME"
 Lsub_dir:     .asciz "/.config/avenger"

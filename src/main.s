@@ -24,37 +24,32 @@ FUNC_BEGIN _main
     bl _av_config_load
     bl _av_config_apply
 
-    mov x0, #DOC_SIZE
-    bl _av_arena_alloc
-    mov x21, x0
-    mov x22, #0
-    cmp x19, #2
-    b.lt 1f
-    ldr x22, [x20, #8]
-    mov x0, x21
-    mov x1, x22
-    bl _av_doc_open
-    b 2f
-1:  mov x0, x21
-    bl _av_doc_init
-
-2:  mov x0, x21
-    bl _av_editor_create
-    mov x19, x0
-    mov x1, x22
-    bl _av_window_create
+    // one tab per file argument, or an untitled one
+2:  bl _av_window_create
+    mov x21, #1
+4:  cmp x21, x19
+    b.hs 5f
+    ldr x0, [x20, x21, lsl #3]
+    bl _av_tab_open
+    add x21, x21, #1
+    b 4b
+5:  LDRG x9, _av_ntabs
+    cbnz x9, 6f
+    mov x0, #0
+    bl _av_tab_open
+6:  bl _av_window_show
     // dev hooks: AV_TYPE feeds synthetic keys, AV_SNAPSHOT=out.png renders a frame and exits
     LADDR x0, Ltype_env
     bl _getenv
-    cbz x0, 4f
+    cbz x0, 7f
     mov x1, x0
-    mov x0, x19
+    bl _av_tabs_current_view
     bl _av_snapshot_type
-4:  LADDR x0, Lsnap_env
+7:  LADDR x0, Lsnap_env
     bl _getenv
     cbz x0, 3f
     mov x1, x0
-    mov x0, x19
+    LDRG x0, _av_container
     bl _av_snapshot
     bl _exit
 3:  bl _av_app_run

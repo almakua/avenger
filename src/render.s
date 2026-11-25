@@ -46,6 +46,7 @@ Lfont_warn:
     .globl _av_attrs
     .globl _av_line_h
     .globl _av_adv
+    .globl _av_base_off
 
     .text
 // void av_render_init(void), default font until the config is applied
@@ -278,7 +279,7 @@ FUNC_BEGIN _av_render_draw
     movi d1, #0
     fmov d2, d8
     fmov d3, d9
-    bl Lfill
+    bl _av_fill
 
     ldr x22, [x20, #V_DOC]
     ldr x24, [x22, #BUF_NLINES]
@@ -325,7 +326,7 @@ Lrow:
     ldr d1, [sp, #L_YBOT]
     fsub d2, d8, d15
     fmov d3, d10
-    bl Lfill
+    bl _av_fill
 
 1:  mov x0, x22
     mov x1, x23
@@ -371,7 +372,7 @@ Lrow:
     mov x0, x21
     LADDR x1, _av_theme
     add x1, x1, #T_SEL
-    bl Lfill
+    bl _av_fill
 
     // text: lex the expanded line, draw each color run at its column
 2:  mov x0, x22
@@ -428,7 +429,7 @@ Lrun:
     ldr d1, [sp, #L_YBOT]
     LDRD d2, _av_base_off
     fadd d1, d1, d2
-    bl Ldraw_text
+    bl _av_draw_text
     b Lrun
 3:  add x23, x23, #1
     fsub d11, d11, d10
@@ -444,7 +445,7 @@ Lrows_end:
     movi d1, #0
     fmov d2, d15
     fmov d3, d9
-    bl Lfill
+    bl _av_fill
     ldr d11, [sp, #L_Y0]
     mov x23, x28
 Lnum:
@@ -469,7 +470,7 @@ Lnum:
 4:  mov x2, x1
     mov x1, x0
     mov x0, x21
-    bl Ldraw_text
+    bl _av_draw_text
     add x23, x23, #1
     fsub d11, d11, d10
     b Lnum
@@ -503,7 +504,7 @@ Lnum_end:
     mov x0, x21
     LADDR x1, _av_theme
     add x1, x1, #T_CURSOR
-    bl Lfill
+    bl _av_fill
 
 Lout:
     ldp d14, d15, [sp, #144]
@@ -518,9 +519,8 @@ Lout:
     ldp x29, x30, [sp], #DRAW_FRAME
     ret
 
-// void fill(CGContextRef c, const double *rgba, CGRect r in d0..d3)
-    .p2align 2
-Lfill:
+// void av_fill(CGContextRef c, const double *rgba, CGRect r in d0..d3)
+FUNC_BEGIN _av_fill
     stp x29, x30, [sp, #-64]!
     mov x29, sp
     stp d8, d9, [sp, #16]
@@ -546,10 +546,9 @@ Lfill:
     ldp x29, x30, [sp], #64
     ret
 
-// void draw_text(CGContextRef c, const char *p, size_t n, CFDictionaryRef attrs, double x, double y)
+// void av_draw_text(CGContextRef c, const char *p, size_t n, CFDictionaryRef attrs, double x, double y)
 // invalid UTF-8 falls back to Latin-1 so binary junk still renders
-    .p2align 2
-Ldraw_text:
+FUNC_BEGIN _av_draw_text
     stp x29, x30, [sp, #-64]!
     mov x29, sp
     stp x19, x20, [sp, #16]
