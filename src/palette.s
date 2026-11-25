@@ -5,14 +5,20 @@
 .include "objc.inc"
 .include "theme.inc"
 .include "keymap.inc"
+.include "buffer.inc"
+.include "doc.inc"
+.include "hl.inc"
+.include "yaml.inc"
 
-.set MAX_ITEMS, 128
+.set MAX_ITEMS, 2048
 .set IT_ID,    0               // action id, or TAB_ITEM + tab index
 .set IT_SCORE, 8
 .set IT_LABEL, 16              // 72 bytes
 .set IT_KEY,   88              // 24 bytes
 .set IT_SIZE,  112
 .set TAB_ITEM, 0x1000
+.set LINE_ITEM, 0x100000       // outline: LINE_ITEM + 1-based line
+.set OL_SIZE, 128
 .set MAX_ROWS, 12
 .set PAL_W,    640
 .set PAD,      8
@@ -74,6 +80,9 @@ Lt_obj:      .asciz "v@:@"
 Lt_cmd:      .asciz "c@:@@:"
 Ls_hint:     .asciz "Run a command or go to a tab"
 Ls_tab:      .asciz "tab: "
+Ls_keys:     .asciz "Go to a key"
+Ls_cut:      .asciz "\342\200\246"
+Lf_line:     .asciz "%ld"
 
     .section __DATA,__const
     .p2align 3
@@ -96,6 +105,8 @@ Lpal_methods_end:
     .zerofill __DATA,__bss,_av_pal_top,8,3
     .zerofill __DATA,__bss,_av_pal_run,8,3
     .zerofill __DATA,__bss,_av_pal_ctx,8,3
+    .zerofill __DATA,__bss,_av_pal_yaml,Y_SIZE,4
+    .zerofill __DATA,__bss,_av_pal_ol,(MAX_ITEMS * OL_SIZE),4
 
     .text
 // NSColor *av_ui_color(size_t slot): theme slot offset (T_*) as an sRGB color
@@ -265,7 +276,7 @@ Lfield_h:
     ret
 
 // void add_item(size_t id, const char *prefix, const char *name, long key): label is prefix +
-// name with underscores as spaces, key the prefix binding as text
+// name (underscores as spaces for actions), key the prefix binding as text
     .p2align 2
 Ladd_item:
     stp x29, x30, [sp, #-64]!
@@ -294,6 +305,9 @@ Ladd_item:
     mov x1, x21
     mov x2, #72
     bl _strlcat
+    // action names read better with spaces, file names and keys stay as they are
+    cmp x19, #TAB_ITEM
+    b.hs 2f
     add x9, x23, #IT_LABEL
 1:  ldrb w10, [x9], #1
     cbz w10, 2f
@@ -483,11 +497,10 @@ FUNC_BEGIN _av_palette_layout
     ldp x29, x30, [sp], #64
     ret
 
-// void av_palette_toggle(void)
+// void av_palette_toggle(void): actions and tabs
 FUNC_BEGIN _av_palette_toggle
-    stp x29, x30, [sp, #-32]!
+    stp x29, x30, [sp, #-16]!
     mov x29, sp
-    str x19, [sp, #16]
     LDRG x9, _av_pal_view
     cbz x9, 1f
     mov x0, #-1
@@ -496,6 +509,108 @@ FUNC_BEGIN _av_palette_toggle
 1:  LDRG x9, _av_container
     cbz x9, 9f
     bl Lbuild
+    LADDR x0, Ls_hint
+    bl Lshow
+9:  ldp x29, x30, [sp], #16
+    ret
+
+// void av_palette_outline(void): the keys of the focused YAML doc, return jumps to the line
+FUNC_BEGIN _av_palette_outline
+    stp x29, x30, [sp, #-64]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    LDRG x9, _av_pal_view
+    cbz x9, 1f
+    mov x0, #-1
+    bl Lclose
+    b 9f
+1:  bl _av_tabs_current_doc
+    cbz x0, 8f
+    mov x19, x0
+    ldr x9, [x19, #DOC_LANG]
+    cmp x9, #LANG_YAML
+    b.ne 8f
+    bl _av_buf_len
+    mov x20, x0
+    add x0, x0, #1
+    bl _malloc
+    cbz x0, 8f
+    mov x21, x0
+    mov x0, x19
+    mov x1, #0
+    mov x2, x21
+    mov x3, x20
+    bl _av_buf_copy
+    strb wzr, [x21, x20]
+    LADDR x0, _av_pal_yaml
+    mov x1, x21
+    mov x2, x20
+    bl _av_yaml_parse
+    LADDR x1, _av_pal_ol
+    mov x2, #MAX_ITEMS
+    bl _av_outline
+    mov x22, x0
+    STRG xzr, _av_pal_nitems, x9
+    mov x19, #0
+2:  cmp x19, x22
+    b.hs 5f
+    LADDR x9, _av_pal_ol
+    mov x10, #OL_SIZE
+    madd x20, x19, x10, x9
+    // long paths keep their tail
+    add x0, x20, #8
+    bl _strlen
+    add x2, x20, #8
+    adr x1, Lnul
+    cmp x0, #69
+    b.ls 3f
+    add x2, x2, x0
+    sub x2, x2, #66
+    LADDR x1, Ls_cut
+3:  ldr x0, [x20]
+    add x0, x0, #LINE_ITEM
+    mov x3, #-1
+    bl Ladd_item
+    // the line number on the right
+    LDRG x9, _av_pal_nitems
+    sub x9, x9, #1
+    LADDR x10, _av_pal_items
+    mov x11, #IT_SIZE
+    madd x0, x9, x11, x10
+    add x0, x0, #IT_KEY
+    ldr x9, [x20]
+    sub sp, sp, #16
+    str x9, [sp]
+    mov x1, #24
+    LADDR x2, Lf_line
+    bl _snprintf
+    add sp, sp, #16
+    add x19, x19, #1
+    b 2b
+5:  LADDR x0, _av_pal_yaml
+    bl _av_yaml_free
+    mov x0, x21
+    bl _free
+    // nothing to list (or the parser stopped at an error, shown in the editor)
+    LDRG x9, _av_pal_nitems
+    cbz x9, 8f
+    LADDR x0, Ls_keys
+    bl Lshow
+    b 9f
+8:  bl _NSBeep
+9:  ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #64
+    ret
+
+// void show(const char *placeholder): palette over the items already built
+    .p2align 2
+Lshow:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    mov x20, x0
     bl Lpal_class
     MSG alloc
     movi d0, #0
@@ -506,7 +621,7 @@ FUNC_BEGIN _av_palette_toggle
     mov x19, x0
     STRG x19, _av_pal_view, x9
     mov x0, x19
-    LADDR x1, Ls_hint
+    mov x1, x20
     bl _av_ui_field
     STRG x0, _av_pal_field, x9
     mov x2, x0
@@ -523,7 +638,7 @@ FUNC_BEGIN _av_palette_toggle
     bl _av_palette_layout
     LDRG x0, _av_pal_field
     bl _av_ui_focus_field
-9:  ldr x19, [sp, #16]
+    ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
 
@@ -559,7 +674,13 @@ Lrun_later:
     STRG xzr, _av_pal_ctx, x9
     MSG removeFromSuperview
 1:  tbnz x19, #63, 9f
-    cmp x19, #TAB_ITEM
+    mov x9, #LINE_ITEM
+    cmp x19, x9
+    b.lo 11f
+    sub x0, x19, x9
+    bl Lgoto_line
+    b 9f
+11: cmp x19, #TAB_ITEM
     b.lo 2f
     sub x0, x19, #TAB_ITEM
     bl _av_tab_activate
@@ -568,6 +689,46 @@ Lrun_later:
     bl _av_action
 9:  ldr x19, [sp, #16]
     ldp x29, x30, [sp], #32
+    ret
+
+// void goto_line(size_t line): 1-based line of the focused editor, cursor on its first non-blank
+    .p2align 2
+Lgoto_line:
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    str x21, [sp, #32]
+    mov x21, x0
+    bl _av_tabs_current_doc
+    cbz x0, 9f
+    mov x20, x0
+    bl _av_tabs_current_view
+    mov x19, x0
+    bl _av_editor_state
+    mov x9, x0
+    str x9, [sp, #40]
+    cbz x21, 1f
+    sub x21, x21, #1
+1:  ldr x10, [x20, #BUF_NLINES]
+    cmp x21, x10
+    b.hs 9f
+    mov x0, x20
+    mov x1, x21
+    bl _av_buf_line_start
+    mov x1, x0
+    ldr x0, [sp, #40]
+    mov x2, #0
+    bl _av_view_set_cursor
+    ldr x0, [sp, #40]
+    mov x1, #MV_HOME
+    mov x2, #0
+    mov x3, #0
+    bl _av_view_move
+    mov x0, x19
+    bl _av_editor_reveal
+9:  ldr x21, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
     ret
 
 // controlTextDidEndEditing: focus went elsewhere (a click on a pane or the tab bar)

@@ -483,10 +483,13 @@ FUNC_BEGIN _av_doc_detach
 5:  mov x0, x2
     ret
 
-// views_ins(Doc *d, size_t pos, size_t n): positions after pos move right by n
+// views_ins(Doc *d, size_t pos, size_t n): positions after pos move right by n, generation bumped
 // a cursor right at pos stays, the editing view sets its own cursor afterwards
     .p2align 2
 Lviews_ins:
+    ldr x3, [x0, #DOC_GEN]
+    add x3, x3, #1
+    str x3, [x0, #DOC_GEN]
     ldr x3, [x0, #DOC_VIEWS]
 1:  cbz x3, 9f
     ldp x4, x5, [x3, #V_CUR]
@@ -504,6 +507,9 @@ Lviews_ins:
 // views_del(Doc *d, size_t pos, size_t n): positions past the range move left, inside it to pos
     .p2align 2
 Lviews_del:
+    ldr x3, [x0, #DOC_GEN]
+    add x3, x3, #1
+    str x3, [x0, #DOC_GEN]
     ldr x3, [x0, #DOC_VIEWS]
     add x7, x1, x2
 1:  cbz x3, 9f

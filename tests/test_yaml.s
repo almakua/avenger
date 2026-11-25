@@ -58,6 +58,7 @@
 .endm
 
     .zerofill __DATA,__bss,_tctx,Y_SIZE,4
+    .zerofill __DATA,__bss,_tol,(16 * 128),4
 
     .section __TEXT,__cstring,cstring_literals
 Ldoc:
@@ -91,6 +92,16 @@ Ldoc:
     .ascii "flag: Yes\n"
     .asciz "multi: [a,\n  b]\n"
 
+Lol:
+    .ascii "a:\n"
+    .ascii "  b: 1\n"
+    .ascii "  c:\n"
+    .ascii "    - x\n"
+    .ascii "    - k: v\n"
+    .asciz "d: 2\n"
+Lol_2:      .asciz "a.c[1].k"
+Lol_tpl:    .asciz "image: {{ .Values.image }}\n"
+Lol_plain:  .asciz "image: nginx\n"
 Lk_font:      .asciz "font"
 Lk_size:      .asciz "font_size"
 Lk_tab:       .asciz "tab_width"
@@ -328,6 +339,50 @@ FUNC_BEGIN _main
 
     LADDR x0, _tctx
     bl _av_yaml_free
+
+    // outline paths and lines, template detection
+    LADDR x0, Lol
+    bl _strlen
+    mov x2, x0
+    LADDR x0, _tctx
+    LADDR x1, Lol
+    bl _av_yaml_parse
+    LADDR x1, _tol
+    mov x2, #16
+    bl _av_outline
+    CHECK 200, 7
+    LADDR x9, _tol
+    ldr x0, [x9, #(5 * 128)]
+    CHECK 201, 5
+    LADDR x0, _tol
+    add x0, x0, #(5 * 128 + 8)
+    LADDR x1, Lol_2
+    bl _strcmp
+    sxtw x0, w0
+    CHECK 202, 0
+    LADDR x9, _tol
+    ldr x0, [x9, #(6 * 128)]
+    CHECK 203, 6
+    LADDR x9, _tol
+    ldrb w0, [x9, #(3 * 128 + 8 + 3)]
+    CHECK 204, '['
+    LADDR x0, _tctx
+    LADDR x1, _tol
+    mov x2, #3
+    LADDR x0, _tctx
+    ldr x0, [x0, #Y_ROOT]
+    bl _av_outline
+    CHECK 205, 3
+    LADDR x0, _tctx
+    bl _av_yaml_free
+    LADDR x0, Lol_tpl
+    mov x1, #27
+    bl _av_yaml_is_template
+    CHECK 206, 1
+    LADDR x0, Lol_plain
+    mov x1, #13
+    bl _av_yaml_is_template
+    CHECK 207, 0
     bl Lsummary
     ldp x24, x25, [sp, #16]
     ldp x29, x30, [sp], #32
