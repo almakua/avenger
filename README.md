@@ -39,6 +39,12 @@ Themes: the four Catppuccin flavors are built in (`mocha`, `macchiato`, `frappe`
 `latte`) and can be switched from View > Theme (or ⌥⌘T). Any other `theme:` name loads
 `~/.config/avenger/themes/<name>.yaml`, see `themes/example.yaml`.
 
+## Syntax highlighting
+
+YAML, ARM64 assembly, C/Objective-C/C++, JSON, shell (also Makefile, Dockerfile, `#!`
+scripts), Python and Markdown, detected from the file name. Colors come from the theme
+roles (`keyword`, `string`, `key`, ...), so custom themes recolor them too.
+
 ## Tools
 
 ```sh

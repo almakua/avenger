@@ -5,6 +5,7 @@
 .include "buffer.inc"
 .include "doc.inc"
 .include "theme.inc"
+.include "hl.inc"
 
 .set DISPLAY_MAX, 8192
 .set ENC_LATIN1,  0x0201
@@ -17,7 +18,13 @@
 .set L_CA,     192
 .set L_LAST,   200
 .set L_NUMEND, 240
-.set DRAW_FRAME, 256
+.set L_TXT,    256
+.set L_TXTLEN, 264
+.set L_NRUNS,  272
+.set L_RUN,    280
+.set L_BYTE,   288
+.set L_COL,    296
+.set DRAW_FRAME, 320
 
     CLASSREF NSGraphicsContext
     SELDEF currentContext, "currentContext"
@@ -366,19 +373,63 @@ Lrow:
     add x1, x1, #T_SEL
     bl Lfill
 
+    // text: lex the expanded line, draw each color run at its column
 2:  mov x0, x22
     ldp x1, x2, [sp, #L_LS]
     bl Lexpand
     cbz x1, 3f
-    mov x2, x1
-    mov x1, x0
+    stp x0, x1, [sp, #L_TXT]
+    mov x0, x22
+    mov x1, x23
+    bl _av_hl_state_at
+    mov x3, x0
+    ldr x0, [x22, #DOC_LANG]
+    ldp x1, x2, [sp, #L_TXT]
+    LADDR x4, _av_runs
+    bl _av_hl_lex
+    str x1, [sp, #L_NRUNS]
+    str xzr, [sp, #L_RUN]
+    str xzr, [sp, #L_BYTE]
+    str xzr, [sp, #L_COL]
+Lrun:
+    ldp x9, x10, [sp, #L_NRUNS]
+    cmp x10, x9
+    b.hs 3f
+    LADDR x11, _av_runs
+    add x11, x11, x10, lsl #3
+    ldr w12, [x11, #RUN_START]
+    ldrh w13, [x11, #RUN_LEN]
+    ldrh w14, [x11, #RUN_SLOT]
+    add x10, x10, #1
+    str x10, [sp, #L_RUN]
+    // advance the column over the bytes before this run (UTF-8 lead bytes only)
+    ldp x15, x16, [sp, #L_BYTE]
+    ldr x17, [sp, #L_TXT]
+4:  cmp x15, x12
+    b.hs 5f
+    ldrb w0, [x17, x15]
+    add x15, x15, #1
+    and w0, w0, #0xc0
+    cmp w0, #0x80
+    cinc x16, x16, ne
+    b 4b
+5:  stp x15, x16, [sp, #L_BYTE]
+    ucvtf d0, x16
+    fmul d0, d0, d14
+    fadd d0, d0, d12
+    fsub d0, d0, d13
+    fcmp d0, d8
+    b.ge 3f
     mov x0, x21
-    ATTRS x3, T_TEXT
-    fsub d0, d12, d13
+    add x1, x17, x12
+    mov x2, x13
+    LADDR x3, _av_attrs
+    ldr x3, [x3, x14, lsl #3]
     ldr d1, [sp, #L_YBOT]
     LDRD d2, _av_base_off
     fadd d1, d1, d2
     bl Ldraw_text
+    b Lrun
 3:  add x23, x23, #1
     fsub d11, d11, d10
     b Lrow

@@ -38,6 +38,10 @@ FUNC_BEGIN _av_doc_open
     cbnz x0, 2f
 1:  mov x0, x19
     bl Lundo_init
+    mov x20, x0
+    mov x0, x19
+    bl _av_hl_detect
+    mov x0, x20
 2:  ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
@@ -201,6 +205,9 @@ FUNC_BEGIN _av_doc_insert
 
 6:  mov x0, x19
     mov x1, x20
+    bl _av_hl_invalidate
+    mov x0, x19
+    mov x1, x20
     mov x2, x21
     mov x3, x22
     bl _av_buf_insert
@@ -312,6 +319,9 @@ FUNC_BEGIN _av_doc_delete
 
 6:  mov x0, x19
     mov x1, x20
+    bl _av_hl_invalidate
+    mov x0, x19
+    mov x1, x20
     mov x2, x21
     bl _av_buf_delete
 8:  ldp x23, x24, [sp, #48]
@@ -336,6 +346,9 @@ FUNC_BEGIN _av_doc_undo
     sub x21, x11, x12
     sub x9, x9, x12
     str x9, [x19, #DOC_U_POS]
+    ldr x1, [x21, #UR_POS]
+    mov x0, x19
+    bl _av_hl_invalidate
     ldr w13, [x21, #UR_TYPE]
     ldp x1, x2, [x21, #UR_POS]
     cmp w13, #UR_INSERT
@@ -375,6 +388,10 @@ FUNC_BEGIN _av_doc_redo
     add x12, x2, #UR_OVERHEAD
     add x9, x9, x12
     str x9, [x19, #DOC_U_POS]
+    ldr x1, [x21, #UR_POS]
+    mov x0, x19
+    bl _av_hl_invalidate
+    ldp x1, x2, [x21, #UR_POS]
     ldr w13, [x21, #UR_TYPE]
     cmp w13, #UR_INSERT
     b.ne 2f
