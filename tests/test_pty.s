@@ -17,9 +17,11 @@
 
     .zerofill __DATA,__bss,_tvt,8,3
     .zerofill __DATA,__bss,_tbuf,4096,4
+    .zerofill __DATA,__bss,_tcwd,1024,4
 
     .section __TEXT,__cstring,cstring_literals
-Lcmd: .asciz "stty size; printf 'hi\\n%s' \"$TERM\""
+Lcmd: .asciz "stty size; printf 'hi\\n%s\\n' \"$TERM\"; pwd"
+Lcwd: .asciz "/"
 
     .text
 FUNC_BEGIN _main
@@ -32,6 +34,7 @@ FUNC_BEGIN _main
     mov x1, #80
     LADDR x2, Lcmd
     add x3, sp, #32
+    LADDR x4, Lcwd
     bl _av_pty_spawn
     mov x19, x0
     cmp x0, #0
@@ -62,13 +65,14 @@ FUNC_BEGIN _main
     bl _av_vt_feed
     b 1b
 
-    // "24 80", then "hi" and TERM, newlines arrive as CR LF
+    // "24 80", "hi", TERM and the working directory, newlines arrive as CR LF
 2:  CP 2, 0, 0, '2'
     CP 3, 3, 0, '8'
     CP 4, 0, 1, 'h'
     CP 5, 1, 1, 'i'
     CP 6, 0, 2, 'x'
     CP 7, 13, 2, 'r'
+    CP 10, 0, 3, '/'
     mov x0, x19
     add x1, sp, #40
     mov w2, #0
@@ -80,6 +84,22 @@ FUNC_BEGIN _main
     CHECK 9, 0
     mov w0, w20
     bl _close
+
+    // our own working directory, read back through proc_pidinfo
+    bl _getpid
+    mov w1, w0
+    mov w0, #-1
+    LADDR x2, _tcwd
+    bl _av_pty_cwd
+    CHECK 11, 0
+    LADDR x0, _tbuf
+    mov x1, #1024
+    bl _getcwd
+    LADDR x0, _tbuf
+    LADDR x1, _tcwd
+    bl _strcmp
+    sxtw x0, w0
+    CHECK 12, 0
 
     LDRG x0, _tvt
     bl _av_vt_free

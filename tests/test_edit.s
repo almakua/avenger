@@ -45,6 +45,15 @@
     CHECK \id, \expected
 .endm
 
+.macro VIEW2_IS id, cur, anchor
+    LADDR x9, _tview2
+    ldr x0, [x9, #V_CUR]
+    CHECK \id, \cur
+    LADDR x9, _tview2
+    ldr x0, [x9, #V_ANCHOR]
+    CHECK (\id + 1), \anchor
+.endm
+
 .macro LEN_IS id, expected
     CALL0 _av_buf_len, _tdoc
     CHECK \id, \expected
@@ -65,6 +74,7 @@
 
     .zerofill __DATA,__bss,_tdoc,DOC_SIZE,4
     .zerofill __DATA,__bss,_tview,V_SIZE,4
+    .zerofill __DATA,__bss,_tview2,V_SIZE,4
 
     .section __TEXT,__cstring,cstring_literals
 Ls_a:      .asciz "a"
@@ -223,6 +233,51 @@ FUNC_BEGIN _main
     INS Ls_utf8, 3, 0
     VIEW_OP _av_view_backspace
     LEN_IS 53, 1
+
+    // a second view on the same doc follows edits made through the first
+    LADDR x0, _tdoc
+    LADDR x1, _tview
+    bl _av_doc_attach
+    LADDR x0, _tdoc
+    LADDR x1, _tview2
+    bl _av_doc_attach
+    LADDR x9, _tview2
+    LADDR x10, _tdoc
+    str x10, [x9, #V_DOC]
+    VIEW_OP _av_view_select_all
+    INS Ls_abcd, 5, 0
+    LADDR x9, _tview2
+    mov x10, #4
+    mov x11, #2
+    stp x10, x11, [x9, #V_CUR]
+    SET_CUR 0
+    INS Ls_X, 1, 0
+    VIEW2_IS 60, 5, 3
+    // deleting "abc" from "Xabc d"
+    SET_CUR 4
+    LADDR x0, _tview
+    mov x1, #1
+    mov x2, #1
+    bl _av_view_set_cursor
+    VIEW_OP _av_view_backspace
+    VIEW2_IS 62, 2, 1
+    VIEW_OP _av_view_undo
+    VIEW2_IS 64, 5, 1
+    VIEW_OP _av_view_redo
+    VIEW2_IS 66, 2, 1
+    CUR_IS 68, 1
+    LADDR x0, _tdoc
+    LADDR x1, _tview2
+    bl _av_doc_detach
+    CHECK 69, 1
+    LADDR x0, _tdoc
+    LADDR x1, _tview2
+    bl _av_doc_detach
+    CHECK 70, 1
+    LADDR x0, _tdoc
+    LADDR x1, _tview
+    bl _av_doc_detach
+    CHECK 71, 0
 
     bl Lsummary
     ldp x29, x30, [sp], #16

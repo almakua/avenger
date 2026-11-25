@@ -10,6 +10,7 @@
 .set DOC_HL_STATES, 112 // u8 lexer state at the start of each line
 .set DOC_HL_CAP,    120
 .set DOC_HL_VALID,  128 // states[0..valid] are up to date
+.set DOC_VIEWS,  136    // list of Views showing this doc, linked by V_NEXT
 .set DOC_SIZE,   160
 
 // undo record: [type u32][flags u32][pos u64][len u64][text][size u64]
@@ -35,6 +36,7 @@
 .set V_SCROLLX, 32
 .set V_PREFCOL, 40
 .set V_NSVIEW,  48
+.set V_NEXT,    56
 .set V_SIZE,    64
 
 // default tab stop width, the live value is _av_tab_width

@@ -208,6 +208,10 @@ FUNC_BEGIN _av_doc_insert
     bl _av_hl_invalidate
     mov x0, x19
     mov x1, x20
+    mov x2, x22
+    bl Lviews_ins
+    mov x0, x19
+    mov x1, x20
     mov x2, x21
     mov x3, x22
     bl _av_buf_insert
@@ -323,6 +327,10 @@ FUNC_BEGIN _av_doc_delete
     mov x0, x19
     mov x1, x20
     mov x2, x21
+    bl Lviews_del
+    mov x0, x19
+    mov x1, x20
+    mov x2, x21
     bl _av_buf_delete
 8:  ldp x23, x24, [sp, #48]
     ldp x21, x22, [sp, #32]
@@ -355,10 +363,15 @@ FUNC_BEGIN _av_doc_undo
     b.ne 2f
     mov x20, x1
     mov x0, x19
+    bl Lviews_del
+    ldp x1, x2, [x21, #UR_POS]
+    mov x0, x19
     bl _av_buf_delete
     b 3f
 2:  add x20, x1, x2
-    mov x3, x2
+    mov x0, x19
+    bl Lviews_ins
+    ldp x1, x3, [x21, #UR_POS]
     add x2, x21, #UR_TEXT
     mov x0, x19
     bl _av_buf_insert
@@ -396,12 +409,17 @@ FUNC_BEGIN _av_doc_redo
     cmp w13, #UR_INSERT
     b.ne 2f
     add x20, x1, x2
-    mov x3, x2
+    mov x0, x19
+    bl Lviews_ins
+    ldp x1, x3, [x21, #UR_POS]
     add x2, x21, #UR_TEXT
     mov x0, x19
     bl _av_buf_insert
     b 3f
 2:  mov x20, x1
+    mov x0, x19
+    bl Lviews_del
+    ldp x1, x2, [x21, #UR_POS]
     mov x0, x19
     bl _av_buf_delete
     // keep going while the next record is joined to this one
@@ -437,3 +455,70 @@ FUNC_BEGIN _av_doc_free
     ldr x19, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
+
+// void av_doc_attach(Doc *d, View *v): v follows edits made through any view of d
+FUNC_BEGIN _av_doc_attach
+    ldr x9, [x0, #DOC_VIEWS]
+    str x9, [x1, #V_NEXT]
+    str x1, [x0, #DOC_VIEWS]
+    ret
+
+// size_t av_doc_detach(Doc *d, View *v): views still attached afterwards
+FUNC_BEGIN _av_doc_detach
+    add x2, x0, #DOC_VIEWS
+1:  ldr x3, [x2]
+    cbz x3, 3f
+    cmp x3, x1
+    b.eq 2f
+    add x2, x3, #V_NEXT
+    b 1b
+2:  ldr x4, [x3, #V_NEXT]
+    str x4, [x2]
+3:  mov x2, #0
+    ldr x3, [x0, #DOC_VIEWS]
+4:  cbz x3, 5f
+    add x2, x2, #1
+    ldr x3, [x3, #V_NEXT]
+    b 4b
+5:  mov x0, x2
+    ret
+
+// views_ins(Doc *d, size_t pos, size_t n): positions after pos move right by n
+// a cursor right at pos stays, the editing view sets its own cursor afterwards
+    .p2align 2
+Lviews_ins:
+    ldr x3, [x0, #DOC_VIEWS]
+1:  cbz x3, 9f
+    ldp x4, x5, [x3, #V_CUR]
+    add x6, x4, x2
+    cmp x4, x1
+    csel x4, x6, x4, hi
+    add x6, x5, x2
+    cmp x5, x1
+    csel x5, x6, x5, hi
+    stp x4, x5, [x3, #V_CUR]
+    ldr x3, [x3, #V_NEXT]
+    b 1b
+9:  ret
+
+// views_del(Doc *d, size_t pos, size_t n): positions past the range move left, inside it to pos
+    .p2align 2
+Lviews_del:
+    ldr x3, [x0, #DOC_VIEWS]
+    add x7, x1, x2
+1:  cbz x3, 9f
+    ldp x4, x5, [x3, #V_CUR]
+    cmp x4, x1
+    csel x6, x4, x1, lo
+    sub x8, x4, x2
+    cmp x4, x7
+    csel x4, x8, x6, hs
+    cmp x5, x1
+    csel x6, x5, x1, lo
+    sub x8, x5, x2
+    cmp x5, x7
+    csel x5, x8, x6, hs
+    stp x4, x5, [x3, #V_CUR]
+    ldr x3, [x3, #V_NEXT]
+    b 1b
+9:  ret

@@ -15,6 +15,9 @@
 .set PW_DIR,     48
 .set PW_SHELL,   56
 .set ENV_EXTRA,  8
+.set PROC_PIDVNODEPATHINFO, 9
+.set VPI_SIZE,      2352       // struct proc_vnodepathinfo
+.set VPI_CDIR_PATH, 152        // pvi_cdir.vip_path
 
 // spawn locals
 .set SP_WS,    48              // struct winsize
@@ -22,6 +25,7 @@
 .set SP_ENVSZ, 64
 .set SP_ARGV,  72              // 4 pointers
 .set SP_ARG0,  104             // "-zsh"
+.set SP_CWD,   168
 .set SP_FRAME, 192
 
     .section __TEXT,__cstring,cstring_literals
@@ -134,8 +138,9 @@ Lmake_env:
     ldp x29, x30, [sp], #64
     ret
 
-// pid_t av_pty_spawn(size_t rows, size_t cols, const char *cmd, int *fd): -1 on failure
-// cmd NULL runs the user's login shell in $HOME, otherwise /bin/sh -c cmd
+// pid_t av_pty_spawn(size_t rows, size_t cols, const char *cmd, int *fd, const char *cwd)
+// cmd NULL runs the user's login shell, otherwise /bin/sh -c cmd; cwd NULL means $HOME for the
+// shell and no chdir for a command; -1 on failure
 // everything the child needs is prepared before forking, it only chdirs and execs
 FUNC_BEGIN _av_pty_spawn
     stp x29, x30, [sp, #-SP_FRAME]!
@@ -147,17 +152,18 @@ FUNC_BEGIN _av_pty_spawn
     str wzr, [sp, #(SP_WS + 4)]
     mov x19, x2
     mov x20, x3
+    str x4, [sp, #SP_CWD]
     bl _getuid
     bl _getpwuid
     mov x21, x0
     cbz x19, 1f
-    // command: sh -c cmd, no chdir
+    // command: sh -c cmd, chdir only when cwd is given
     LADDR x22, Lsh
     LADDR x9, Lsh_name
     LADDR x10, Ldash_c
     stp x9, x10, [sp, #SP_ARGV]
     stp x19, xzr, [sp, #(SP_ARGV + 16)]
-    mov x19, #0
+    ldr x19, [sp, #SP_CWD]
     b 4f
     // login shell from the user database, then $SHELL, then zsh
 1:  mov x22, #0
@@ -189,7 +195,11 @@ FUNC_BEGIN _av_pty_spawn
     bl _strlcpy
     add x9, sp, #SP_ARG0
     stp x9, xzr, [sp, #SP_ARGV]
-    LADDR x0, Lk_home
+    ldr x19, [sp, #SP_CWD]
+    cbz x19, 31f
+    ldrb w9, [x19]
+    cbnz w9, 4f
+31: LADDR x0, Lk_home
     bl _getenv
     mov x19, x0
     cbnz x19, 4f
@@ -316,6 +326,39 @@ FUNC_BEGIN _av_pty_busy
     ccmp w0, w19, #4, gt
     cset w0, ne
     ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// int av_pty_cwd(int fd, pid_t pid, char *buf): working directory of the foreground job, or of
+// pid when fd is -1 or has no job, into buf (1024 bytes); 0 on success
+FUNC_BEGIN _av_pty_cwd
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    sub sp, sp, #VPI_SIZE
+    mov w19, w1
+    mov x20, x2
+    tbnz w0, #31, 1f
+    bl _tcgetpgrp
+    cmp w0, #0
+    csel w19, w0, w19, gt
+1:  mov w0, w19
+    mov w1, #PROC_PIDVNODEPATHINFO
+    mov x2, #0
+    mov x3, sp
+    mov w4, #VPI_SIZE
+    bl _proc_pidinfo
+    cmp w0, #VPI_SIZE
+    b.lt 8f
+    mov x0, x20
+    add x1, sp, #VPI_CDIR_PATH
+    mov x2, #1024
+    bl _strlcpy
+    mov x0, #0
+    b 9f
+8:  mov x0, #-1
+9:  add sp, sp, #VPI_SIZE
+    ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
 
