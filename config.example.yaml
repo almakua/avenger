@@ -13,6 +13,10 @@ theme: mocha
 # spaces per tab stop, also used by the Tab key (1..16)
 tab_width: 4
 
+# long lines wrap to the pane width; indent guides mark the enclosing blocks
+wrap: true
+indent_guides: true
+
 # tmux-style prefix key: press it, then one of the keys below
 # modifiers: C- control, M-/A- option, D- command, S- shift; names: space tab enter esc
 # left right up down home end pageup pagedown delete backspace
@@ -25,6 +29,7 @@ prefix: C-s
 # pane_left/right/up/down arrows, next_pane o, close_pane x, zoom_pane z,
 # resize_left/right/up/down M-arrows
 # command_palette ":", find /, replace ?, find_next and find_previous (menu only: ⌘G ⇧⌘G)
+# toggle_wrap w, outline g
 # command+1..9 and the menu shortcuts work without the prefix
 # pressing the prefix twice sends it to the tab (C-s C-s gives a terminal ^S)
 keys:

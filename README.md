@@ -31,7 +31,8 @@ build/Avenger.app/Contents/MacOS/avenger [file]
 ## Configuration
 
 Copy `config.example.yaml` to `~/.config/avenger/config.yaml` (or set
-`AVENGER_CONFIG_DIR`). Keys: `font`, `font_size`, `theme`, `tab_width`, `prefix`, `keys`.
+`AVENGER_CONFIG_DIR`). Keys: `font`, `font_size`, `theme`, `tab_width`, `wrap`,
+`indent_guides`, `prefix`, `keys`.
 The file is reloaded when you save it from Avenger or switch back to the app; parse
 errors are printed to stderr with the line number and the previous config stays active.
 
@@ -99,6 +100,19 @@ scroll regions, bracketed paste, titles). The wheel scrolls back through 3000 li
 ⌘C/⌘V to copy and paste. ⌥ composes characters as usual, ⌥←/⌥→ and ⌥⌫ work on words.
 The pane closes when the shell exits; closing it while a job runs asks first. The 16
 terminal colors are theme roles (`ansi_red`, `ansi_bright_black`, ...).
+
+## Editing
+
+Long lines wrap at word boundaries to the width of their pane, so splitting or dragging
+a divider reflows them; up/down move by visual rows. `Ctrl-s w` turns wrapping off for
+the session (`wrap: false` in config.yaml makes it permanent). Indent guides mark the
+enclosing blocks (`indent_guides: false` hides them).
+
+YAML files are checked while you type (a background parse 300 ms after the last edit):
+the first error gets a red squiggle, a red line number and its message at the end of the
+line. Helm/Jinja templates (`{{`, `{%`) are skipped. `Ctrl-s g` lists every key of the
+document as a path (`spec.template.containers[0].image`), filtered like the palette,
+return jumps to it.
 
 ## Syntax highlighting
 
