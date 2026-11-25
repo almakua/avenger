@@ -11,6 +11,12 @@
 .set ENC_LATIN1,  0x0201
 .set RGB_COLORS,  32768
 .set GUIDE_MAX,   64
+.set LC_SLOTS,    4096           // typeset line cache, direct mapped
+.set LC_HASH,     0
+.set LC_ATTRS,    8
+.set LC_LEN,      16
+.set LC_LINE,     24
+.set LC_SIZE,     32
 .set GUIDE_SCAN,  5000           // lines looked at above the first visible one
 
 // drawRect locals
@@ -63,6 +69,7 @@ Lfont_warn:
     .zerofill __DATA,__bss,_av_gstack,(GUIDE_MAX * 8),3
     .zerofill __DATA,__bss,_av_gdepth,8,3
     .zerofill __DATA,__bss,_av_rctx,8,3
+    .zerofill __DATA,__bss,_av_lcache,(LC_SLOTS * LC_SIZE),4
     .globl _av_attrs
     .globl _av_font
     .globl _av_line_h
@@ -190,6 +197,7 @@ FUNC_BEGIN _av_render_rebuild_attrs
     stp x29, x30, [sp, #-32]!
     mov x29, sp
     stp x19, x20, [sp, #16]
+    bl Lflush_lines
     mov x19, #0
     LADDR x20, _av_attrs
 1:  ldr x0, [x20, x19, lsl #3]
@@ -1093,23 +1101,53 @@ FUNC_BEGIN _av_fill
 // void av_draw_text(CGContextRef c, const char *p, size_t n, CFDictionaryRef attrs, double x, double y)
 // invalid UTF-8 falls back to Latin-1 so binary junk still renders
 FUNC_BEGIN _av_draw_text
-    stp x29, x30, [sp, #-64]!
+    stp x29, x30, [sp, #-80]!
     mov x29, sp
     stp x19, x20, [sp, #16]
     stp x21, x22, [sp, #32]
-    stp d8, d9, [sp, #48]
+    stp x23, x24, [sp, #48]
+    stp d8, d9, [sp, #64]
     mov x19, x0
     mov x20, x3
     mov x21, x1
     mov x22, x2
     fmov d8, d0
     fmov d9, d1
-    mov x0, #0
+    // FNV-1a over the bytes, then the attributes; a slot hit skips typesetting
+    ldr x23, =0xcbf29ce484222325
+    ldr x9, =0x100000001b3
+    mov x10, #0
+1:  cmp x10, x22
+    b.hs 2f
+    ldrb w11, [x21, x10]
+    eor x23, x23, x11
+    mul x23, x23, x9
+    add x10, x10, #1
+    b 1b
+2:  eor x23, x23, x20
+    mul x23, x23, x9
+    eor x23, x23, x23, lsr #29
+    and x10, x23, #(LC_SLOTS - 1)
+    LADDR x24, _av_lcache
+    add x24, x24, x10, lsl #5
+    ldp x10, x11, [x24, #LC_HASH]
+    ldp x12, x13, [x24, #LC_LEN]
+    cbz x13, 3f
+    cmp x10, x23
+    ccmp x11, x20, #0, eq
+    ccmp x12, x22, #0, eq
+    b.ne 3f
+    mov x0, x13
+    b 8f
+    // miss: typeset and replace the slot
+3:  mov x0, #0
+    mov x1, x21
+    mov x2, x22
     mov w3, #0x0100
     movk w3, #0x0800, lsl #16
     mov w4, #0
     bl _CFStringCreateWithBytes
-    cbnz x0, 1f
+    cbnz x0, 4f
     mov x0, #0
     mov x1, x21
     mov x2, x22
@@ -1117,14 +1155,26 @@ FUNC_BEGIN _av_draw_text
     mov w4, #0
     bl _CFStringCreateWithBytes
     cbz x0, 9f
-1:  mov x21, x0
+4:  mov x21, x0
     mov x0, #0
     mov x1, x21
     mov x2, x20
     bl _CFAttributedStringCreate
-    mov x22, x0
+    str x0, [sp, #-16]!
     bl _CTLineCreateWithAttributedString
-    mov x20, x0
+    str x0, [sp, #8]
+    ldr x0, [sp]
+    bl _CFRelease
+    mov x0, x21
+    bl _CFRelease
+    ldr x0, [x24, #LC_LINE]
+    cbz x0, 5f
+    bl _CFRelease
+5:  ldr x0, [sp, #8]
+    add sp, sp, #16
+    stp x23, x20, [x24, #LC_HASH]
+    stp x22, x0, [x24, #LC_LEN]
+8:  mov x20, x0
     mov x0, x19
     fmov d0, d8
     fmov d1, d9
@@ -1132,16 +1182,31 @@ FUNC_BEGIN _av_draw_text
     mov x0, x20
     mov x1, x19
     bl _CTLineDraw
-    mov x0, x20
-    bl _CFRelease
-    mov x0, x22
-    bl _CFRelease
-    mov x0, x21
-    bl _CFRelease
-9:  ldp d8, d9, [sp, #48]
+9:  ldp d8, d9, [sp, #64]
+    ldp x23, x24, [sp, #48]
     ldp x21, x22, [sp, #32]
     ldp x19, x20, [sp, #16]
-    ldp x29, x30, [sp], #64
+    ldp x29, x30, [sp], #80
+    ret
+
+// void flush_lines(void): typeset lines refer to attribute dicts that are about to go
+    .p2align 2
+Lflush_lines:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    LADDR x19, _av_lcache
+    mov x20, #0
+1:  ldr x0, [x19, #LC_LINE]
+    cbz x0, 2f
+    str xzr, [x19, #LC_LINE]
+    bl _CFRelease
+2:  add x19, x19, #LC_SIZE
+    add x20, x20, #1
+    cmp x20, #LC_SLOTS
+    b.lo 1b
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
     ret
 
 // (ptr, len) expand(Buffer *b, size_t ls, size_t le): line bytes with tabs as spaces, CR dropped

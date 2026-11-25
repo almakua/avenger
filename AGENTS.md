@@ -5,7 +5,7 @@ AArch64 assembly. Read this first, then the module you are about to touch.
 
 ## Goals
 
-- lightweight and fast: small binary (~148 KB today), instant startup, no runtime deps
+- lightweight and fast: small binary (~154 KB today, __TEXT grows in 16 KB pages), instant startup, no runtime deps
   beyond AppKit/CoreText/libSystem
 - native AppKit GUI plus tmux-style tabs and panes driven by a prefix key (default `C-s`)
 - themes (Catppuccin Mocha default), syntax highlighting, YAML as config format and as a
@@ -39,6 +39,8 @@ Dev hooks (no screen-recording rights needed for visual checks):
 - `AV_TYPE=...` sends synthetic keys to the first responder (pane, palette or find field): printable ASCII, `\n`,
   `\b`, `0x1c..0x1f` arrows, `0x1a` undo, `0x01` select all, `0x14` next theme,
   `0x13` Ctrl-s (prefix), `0x10` runs the run loop for 0.5 s (lets terminal output arrive)
+- `AV_BENCH=N` renders the focused pane offscreen N times still and N times scrolling one row
+  per frame, then prints µs/frame and the time from `main` to the first frame on stderr
 - `AVENGER_CONFIG_DIR=dir` uses `dir/config.yaml` and `dir/themes/` instead of
   `~/.config/avenger`
 
@@ -78,25 +80,27 @@ Dev hooks (no screen-recording rights needed for visual checks):
 | `termview.s` | AvTermView: pty read source (CFFileDescriptor), cell drawing, keys to xterm sequences, scrollback view, selection, copy/paste |
 | `palette.s` | command palette (AvPalette: actions and tabs, fuzzy filtered, NSTextField delegate), shared themed field/color helpers |
 | `findbar.s` | find bar under the focused editor pane (AvFindBar: incremental search, next/prev, replace one/all, count), pattern shared with `render.s` for highlights |
+| `lint.s` | YAML validation while typing: debounce timer on the main queue, parse of a text copy on a global queue, first error stored in the Doc (generation checked) |
 | `editorview.s` | AvEditorView: keys, mouse, scroll, clipboard, undo/redo hooks |
-| `render.s` | font metrics, drawRect (gutter, current line, selection, color runs, cursor), `av_fill`, `av_draw_text` |
-| `snapshot.s` | dev hooks AV_SNAPSHOT / AV_TYPE |
+| `render.s` | font metrics, typeset line cache (CTLines by hash of bytes and attributes, flushed with the attributes), drawRect over wrapped visual rows (gutter, current line, indent guides, selection, find matches, color runs cut at row ends, YAML error squiggle and message, cursor), `av_fill`, `av_draw_text` |
+| `snapshot.s` | dev hooks AV_SNAPSHOT / AV_TYPE / AV_BENCH |
 | `alloc.s` | page and arena allocators |
 | `buffer.s` | gap buffer, incremental line index, NEON newline scan, UTF-8 stepping |
 | `file.s` | single-read load, atomic save (temp + rename, keeps mode) |
 | `doc.s` | Doc = buffer + undo log (merged typing/deleting, joined steps) + highlight hooks; attached Views are shifted on every edit so split panes keep their cursors |
-| `edit.s` | View ops: insert/delete/newline+autoindent/soft tab, moves, selections, columns, `_av_tab_width` |
+| `edit.s` | View ops: insert/delete/newline+autoindent/soft tab, moves (up/down by visual rows), selections, columns, word wrap rows, `_av_tab_width` |
 | `theme.s` | 4 Catppuccin palettes, 32 color roles, YAML themes (base/palette/colors), names |
 | `yaml.s` | YAML subset parser (block/flow, quoted/plain multi-line, block scalars, multi-doc, anchors/tags), errors with line numbers, accessors |
 | `config.s` | config.yaml load/parse/defaults, paths, mtime change detection, stderr reporting |
 | `hl.s` | lexers (generic table-driven for C/JSON/shell/Python, dedicated YAML/asm/Markdown), per-line state cache, language detection |
 | `keymap.s` | key spec parser (`C-s`, `M-x`, `D-t`, names) and formatter, prefix bindings table, action names |
+| `outline.s` | YAML outline (key and item paths with lines, all documents), Helm/Jinja template detection |
 | `search.s` | buffer search forward/backward without moving the gap (memmem on each side, folding loop for smart case), count, replace all as one undo step, fuzzy score |
 | `vt.s` | terminal emulator: VT100/xterm subset parser, row-pointer grids (main/alt), scrollback ring recycling rows, replies (DA/DSR) |
 | `pty.s` | forkpty + login shell in a given directory (env prepared before fork), resize, write with backpressure, busy check, foreground job cwd, reaping |
 
 Core modules (no AppKit, linked into tests): alloc buffer file doc edit theme yaml
-config hl keymap vt pty pane search. Tests live in `tests/test_*.s` using `tests/harness.inc`.
+config hl keymap vt pty pane search outline. Tests live in `tests/test_*.s` using `tests/harness.inc`.
 
 Key data layouts: `include/buffer.inc` (Buffer), `include/doc.inc` (Doc, View, undo
 record, move commands), `include/theme.inc` (color slots), `include/yaml.inc` (nodes,
@@ -104,7 +108,7 @@ errors), `include/hl.inc` (languages, runs), `include/keymap.inc` (actions, modi
 `include/vt.inc` (Vt header, modes, cell bits and color encoding), `include/pane.inc` (pane
 nodes, kinds, directions).
 
-## Done (steps 1-10)
+## Done (steps 1-12)
 
 1. scaffold: Makefile, Info.plist, objc macros, themed empty window
 2. allocators, gap buffer with line index, file load/atomic save, test harness
@@ -124,24 +128,32 @@ nodes, kinds, directions).
    (views attached to it), terminal splits start in the job's or the file's directory
 10. command palette (`:` / ⇧⌘P) over actions and tabs; find bar (`/` / ⌘F) with smart case,
    highlights and count, replace (`?` / ⌥⌘F) one or all
+11. word wrap to the pane width (`wrap`, `C-s w`, scroll offset = line + fraction of its rows),
+   indent guides from enclosing blocks (`indent_guides`), YAML validation in the background with
+   squiggle and inline message, outline palette over key paths (`C-s g`)
+12. performance: CTLine cache in `av_draw_text` (dense asm 1.05 to 0.72 ms per still frame,
+   scrolling 0.84 to 0.48 ms), `AV_BENCH` hook, only `_main` exported (-11 KB); startup is
+   ~85 ms from `main`, of which AppKit app and window setup take all but ~2 ms
 
-Verified numbers: 561 unit checks passing (nvim, zsh with plugins and ls colors render
+Verified numbers: 592 unit checks passing; ~0.7 ms per offscreen frame of a full window
+of dense asm, an 11 MB YAML opens in ~90 ms (nvim, zsh with plugins and ls colors render
 correctly in a terminal tab); 100 MB YAML opens and draws in ~0.14 s; full
 highlight state for 1.5M lines in ~79 ms; parser run on ~3000 real YAML files with no
 crashes (remaining failures are Helm/Jinja templates or genuinely invalid files).
 
 ## Next steps
 
-11. YAML editing extras: inline validation markers from `yaml.s` errors (skip Helm/Jinja
-    templates), indent guides (`T_INDENT`), outline panel jumping via `N_LINE`
-12. performance pass: per-line render cache instead of one CTLine per run per frame,
-    startup profiling, binary size
+Candidates, to be agreed with the maintainer: NSTextInputClient (dead keys, IME), terminal
+mouse reporting and bold/italic faces, persisting the theme picked from the menu, config
+errors shown in the UI, dragging tabs to reorder them
 
 ## Known limitations
 
 - no NSTextInputClient yet: dead keys and IME input do not compose
 - wide glyphs (CJK/emoji) and CRLF line endings misalign the cursor column
-- lines longer than 8 KB are truncated for display and highlighting
+- lines longer than 8 KB are truncated for display and highlighting; wrapped rows are not
+  indented like their line, and indent guides cover only a line's first row
+- YAML validation shows the parser's first error only; the outline needs a document that parses
 - no cursor blink; undo back to the saved state keeps the dirty flag
 - theme picked from the menu is session-only (persist it in config.yaml)
 - config errors are reported on stderr plus a beep on reload, not yet in the UI

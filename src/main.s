@@ -4,11 +4,18 @@
 .include "doc.inc"
 .include "theme.inc"
 
+.set CLOCK_UPTIME_RAW, 8
+
     .section __TEXT,__cstring,cstring_literals
 Lsnap_env:
     .asciz "AV_SNAPSHOT"
 Ltype_env:
     .asciz "AV_TYPE"
+Lbench_env:
+    .asciz "AV_BENCH"
+
+    .zerofill __DATA,__bss,_av_t0,8,3
+    .globl _av_t0
 
     .text
 FUNC_BEGIN _main
@@ -18,6 +25,10 @@ FUNC_BEGIN _main
     stp x21, x22, [sp, #32]
     mov x19, x0
     mov x20, x1
+    // start time for AV_BENCH
+    mov w0, #CLOCK_UPTIME_RAW
+    bl _clock_gettime_nsec_np
+    STRG x0, _av_t0, x9
     bl _av_app_init
     bl _av_render_init
     bl _av_editor_class_init
@@ -46,7 +57,12 @@ FUNC_BEGIN _main
     mov x1, x0
     bl _av_tabs_current_view
     bl _av_snapshot_type
-7:  LADDR x0, Lsnap_env
+7:  LADDR x0, Lbench_env
+    bl _getenv
+    cbz x0, 71f
+    bl _atol
+    bl _av_bench
+71: LADDR x0, Lsnap_env
     bl _getenv
     cbz x0, 3f
     mov x1, x0

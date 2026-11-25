@@ -8,8 +8,9 @@ EXE      := $(BUNDLE)/Contents/MacOS/$(BIN)
 CC       := clang
 ARCH     := -arch arm64 -mmacosx-version-min=13.0
 ASFLAGS  := $(ARCH) -I include -I tests
+# only main is exported: the symbol table and export trie shrink by about 11 KB
 LDFLAGS  := $(ARCH) -framework AppKit -framework CoreText -framework CoreGraphics \
-            -lobjc -Wl,-dead_strip -Wl,-x
+            -lobjc -Wl,-dead_strip -Wl,-x -Wl,-exported_symbol,_main
 
 SRCS     := $(wildcard src/*.s)
 OBJS     := $(patsubst src/%.s,$(OBJDIR)/%.o,$(SRCS))

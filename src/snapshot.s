@@ -3,10 +3,12 @@
 .include "macros.inc"
 .include "objc.inc"
 .include "theme.inc"
+.include "doc.inc"
 
 .set NSBitmapImageFileTypePNG, 4
 .set NSEventTypeKeyDown, 10
 .set NSUTF8StringEncoding, 4
+.set CLOCK_UPTIME_RAW, 8
 
     CLASSREF NSDictionary
     CLASSREF NSString
@@ -28,7 +30,104 @@
     SELDEF selectAll, "selectAll:"
     SELDEF firstResponder, "firstResponder"
 
+// one offscreen redraw of view x20 into rep x21, bounds saved at sp+64
+.macro BENCH_FRAME
+    mov x0, x20
+    ldp d0, d1, [sp, #64]
+    ldp d2, d3, [sp, #80]
+    mov x2, x21
+    MSG cacheDisplay
+.endm
+
+    .section __TEXT,__cstring,cstring_literals
+Lfmt_bench: .asciz "bench: startup %ld ms, still %ld us/frame, scrolling %ld us/frame (%ld frames)\n"
+
     .text
+// void av_bench(long frames): renders the focused pane offscreen, still then scrolling one row
+// per frame (editors), and prints the averages with the time since launch on stderr
+FUNC_BEGIN _av_bench
+    stp x29, x30, [sp, #-128]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    mov x19, x0
+    cmp x19, #1
+    mov x9, #1
+    csel x19, x9, x19, lt
+    mov w0, #CLOCK_UPTIME_RAW
+    bl _clock_gettime_nsec_np
+    LDRG x9, _av_t0
+    sub x24, x0, x9
+    bl _av_tabs_current_view
+    cbz x0, 9f
+    mov x20, x0
+    MSG bounds
+    stp d0, d1, [sp, #64]
+    stp d2, d3, [sp, #80]
+    mov x0, x20
+    MSG bitmapRep
+    mov x21, x0
+    mov w0, #CLOCK_UPTIME_RAW
+    bl _clock_gettime_nsec_np
+    mov x22, x0
+    mov x23, #0
+1:  cmp x23, x19
+    b.hs 2f
+    BENCH_FRAME
+    add x23, x23, #1
+    b 1b
+2:  mov w0, #CLOCK_UPTIME_RAW
+    bl _clock_gettime_nsec_np
+    sub x22, x0, x22
+    str x22, [sp, #96]
+    bl _av_tabs_current_doc
+    str xzr, [sp, #104]
+    cbz x0, 4f
+    mov x0, x20
+    bl _av_editor_state
+    str x0, [sp, #112]
+    mov w0, #CLOCK_UPTIME_RAW
+    bl _clock_gettime_nsec_np
+    mov x22, x0
+    mov x23, #0
+3:  cmp x23, x19
+    b.hs 31f
+    ldr x9, [sp, #112]
+    ldr d0, [x9, #V_SCROLLY]
+    LDRD d1, _av_line_h
+    fadd d0, d0, d1
+    str d0, [x9, #V_SCROLLY]
+    BENCH_FRAME
+    add x23, x23, #1
+    b 3b
+31: mov w0, #CLOCK_UPTIME_RAW
+    bl _clock_gettime_nsec_np
+    sub x22, x0, x22
+    str x22, [sp, #104]
+    // milliseconds and microseconds per frame
+4:  mov x9, #1000
+    ldr x10, =1000000
+    udiv x0, x24, x10
+    ldr x1, [sp, #96]
+    udiv x1, x1, x19
+    udiv x1, x1, x9
+    ldr x2, [sp, #104]
+    udiv x2, x2, x19
+    udiv x2, x2, x9
+    sub sp, sp, #32
+    stp x0, x1, [sp]
+    stp x2, x19, [sp, #16]
+    mov w0, #2
+    LADDR x1, Lfmt_bench
+    bl _dprintf
+    add sp, sp, #32
+9:  ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #128
+    ret
+
 // int av_snapshot(NSView *view, const char *png_path)
 FUNC_BEGIN _av_snapshot
     stp x29, x30, [sp, #-80]!
