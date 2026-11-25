@@ -28,7 +28,12 @@
 .set A_RESIZE_RIGHT, 32
 .set A_RESIZE_UP,    33
 .set A_RESIZE_DOWN,  34
-.set A_COUNT,       35
+.set A_PALETTE,     35
+.set A_FIND,        36
+.set A_REPLACE,     37
+.set A_FIND_NEXT,   38
+.set A_FIND_PREV,   39
+.set A_COUNT,       40
 
 // key binding after the prefix: [mods u32][codepoint u32][action u32][pad]
 .set KM_MODS,   0

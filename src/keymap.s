@@ -39,6 +39,11 @@ La_resize_l:    .asciz "resize_left"
 La_resize_r:    .asciz "resize_right"
 La_resize_u:    .asciz "resize_up"
 La_resize_d:    .asciz "resize_down"
+La_palette:     .asciz "command_palette"
+La_find:        .asciz "find"
+La_replace:     .asciz "replace"
+La_find_next:   .asciz "find_next"
+La_find_prev:   .asciz "find_previous"
 
 Lk_space:    .asciz "space"
 Lk_tab:      .asciz "tab"
@@ -72,6 +77,7 @@ Laction_names:
     .quad La_split_r, La_split_d, La_split_tr, La_split_td
     .quad La_pane_l, La_pane_r, La_pane_u, La_pane_d, La_next_pane, La_close_pane, La_zoom_pane
     .quad La_resize_l, La_resize_r, La_resize_u, La_resize_d
+    .quad La_palette, La_find, La_replace, La_find_next, La_find_prev
 Lkey_names:
     .quad Lk_space, ' ', Lk_tab, 9, Lk_enter, 13, Lk_return, 13, Lk_esc, 27, Lk_escape, 27
     .quad Lk_bs, 127, Lk_left, KEY_LEFT_CP, Lk_right, KEY_RIGHT_CP, Lk_up, KEY_UP_CP
@@ -117,6 +123,9 @@ Ldefaults:
     .long MOD_OPT, KEY_RIGHT_CP, A_RESIZE_RIGHT, 0
     .long MOD_OPT, KEY_UP_CP, A_RESIZE_UP, 0
     .long MOD_OPT, KEY_DOWN_CP, A_RESIZE_DOWN, 0
+    .long 0, ':', A_PALETTE, 0
+    .long 0, '/', A_FIND, 0
+    .long 0, '?', A_REPLACE, 0
 Ldefaults_end:
 
     .zerofill __DATA,__bss,_av_keymap,(KM_MAX * KM_SIZE),4
@@ -407,4 +416,78 @@ FUNC_BEGIN _av_keymap_configure
     ldp x21, x22, [sp, #32]
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #64
+    ret
+
+// long av_keymap_find(size_t action): first key bound to action, (mods << 32) | codepoint, -1 if none
+FUNC_BEGIN _av_keymap_find
+    LADDR x2, _av_keymap
+    LDRG x3, _av_keymap_n
+    mov x4, #0
+1:  cmp x4, x3
+    b.hs 2f
+    add x5, x2, x4, lsl #4
+    add x4, x4, #1
+    ldr w6, [x5, #KM_ACTION]
+    cmp x6, x0
+    b.ne 1b
+    ldp w6, w7, [x5, #KM_MODS]
+    orr x0, x7, x6, lsl #32
+    ret
+2:  mov x0, #-1
+    ret
+
+// size_t av_key_format(long spec, char *buf): spec back to text ("M-left", "%"), returns length
+FUNC_BEGIN _av_key_format
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    mov x19, x1
+    mov x20, x1
+    lsr x21, x0, #32
+    mov w22, w0
+    tbz x21, #18, 1f
+    mov w9, #'C'
+    strb w9, [x20], #1
+    mov w9, #'-'
+    strb w9, [x20], #1
+1:  tbz x21, #19, 2f
+    mov w9, #'M'
+    strb w9, [x20], #1
+    mov w9, #'-'
+    strb w9, [x20], #1
+2:  tbz x21, #20, 3f
+    mov w9, #'D'
+    strb w9, [x20], #1
+    mov w9, #'-'
+    strb w9, [x20], #1
+3:  tbz x21, #17, 4f
+    mov w9, #'S'
+    strb w9, [x20], #1
+    mov w9, #'-'
+    strb w9, [x20], #1
+    // a key name when there is one, else the character itself
+4:  LADDR x9, Lkey_names
+    LADDR x10, Lkey_names_end
+5:  cmp x9, x10
+    b.hs 7f
+    ldr x11, [x9, #8]
+    cmp x11, x22
+    b.eq 6f
+    add x9, x9, #16
+    b 5b
+6:  mov x0, x20
+    ldr x1, [x9]
+    bl _stpcpy
+    mov x20, x0
+    b 8f
+7:  mov x0, x22
+    mov x1, x20
+    bl _av_utf8_encode
+    add x20, x20, x0
+8:  strb wzr, [x20]
+    sub x0, x20, x19
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
     ret

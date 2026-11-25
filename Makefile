@@ -16,7 +16,7 @@ OBJS     := $(patsubst src/%.s,$(OBJDIR)/%.o,$(SRCS))
 INCS     := $(wildcard include/*.inc)
 
 # core modules have no AppKit dependency and link into CLI test binaries
-CORE     := alloc buffer file doc edit theme yaml config hl keymap vt pty pane
+CORE     := alloc buffer file doc edit theme yaml config hl keymap vt pty pane search
 CORE_OBJS := $(patsubst %,$(OBJDIR)/%.o,$(CORE))
 TESTS    := $(patsubst tests/%.s,$(BUILD)/%,$(wildcard tests/test_*.s))
 

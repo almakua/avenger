@@ -17,6 +17,19 @@
     CHECK \id, -1
 .endm
 
+.macro FORMAT id, action, lit, len
+    mov x0, #\action
+    bl _av_keymap_find
+    LADDR x1, _tscratch
+    bl _av_key_format
+    CHECK \id, \len
+    LADDR x0, _tscratch
+    LADDR x1, \lit
+    bl _strcmp
+    sxtw x0, w0
+    CHECK (\id + 1), 0
+.endm
+
 .macro LOOKUP id, mods, cp, action
     ldr x0, =\mods
     ldr x1, =\cp
@@ -41,6 +54,7 @@ Ls_empty:  .asciz ""
 Ls_cdash:  .asciz "C-"
 Ls_foo:    .asciz "Foo"
 Ls_ca:     .asciz "C-a"
+Ls_mleft:  .asciz "M-left"
 Ln_open:   .asciz "open_config"
 Ln_tab9:   .asciz "TAB_9"
 Ln_nope:   .asciz "nope"
@@ -101,6 +115,16 @@ FUNC_BEGIN _main
     LOOKUP 50, MOD_CTRL, KEY_DOWN_CP, 0
     LOOKUP 51, 0, 'x', A_CLOSE_PANE
     LOOKUP 52, 0, '&', A_CLOSE_TAB
+    FORMAT 60, A_RESIZE_LEFT, Ls_mleft, 6
+    FORMAT 62, A_SPLIT_RIGHT, Ls_pct, 1
+    ldr x0, =((MOD_CTRL << 32) | 's')
+    LADDR x1, _tscratch
+    bl _av_key_format
+    LADDR x0, _tscratch
+    LADDR x1, Ls_cs
+    bl _strcmp
+    sxtw x0, w0
+    CHECK 64, 0
 
     // overrides from YAML, custom prefix
     LADDR x0, Lkeys
