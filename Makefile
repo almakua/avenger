@@ -15,7 +15,12 @@ SRCS     := $(wildcard src/*.s)
 OBJS     := $(patsubst src/%.s,$(OBJDIR)/%.o,$(SRCS))
 INCS     := $(wildcard include/*.inc)
 
-.PHONY: all run clean size
+# core modules have no AppKit dependency and link into CLI test binaries
+CORE     := alloc buffer file
+CORE_OBJS := $(patsubst %,$(OBJDIR)/%.o,$(CORE))
+TESTS    := $(patsubst tests/%.s,$(BUILD)/%,$(wildcard tests/test_*.s))
+
+.PHONY: all run clean size test
 
 all: $(EXE) $(BUNDLE)/Contents/Info.plist
 	@codesign -s - --force $(BUNDLE) 2>/dev/null
@@ -32,6 +37,12 @@ $(BUNDLE)/Contents/Info.plist: Info.plist | $(BUNDLE)/Contents/MacOS
 
 $(OBJDIR) $(BUNDLE)/Contents/MacOS:
 	mkdir -p $@
+
+$(BUILD)/test_%: tests/test_%.s $(CORE_OBJS) $(INCS)
+	$(CC) $(ASFLAGS) $< $(CORE_OBJS) -o $@
+
+test: $(TESTS)
+	@for t in $(TESTS); do echo "== $$t"; ./$$t || exit 1; done
 
 run: all
 	open $(BUNDLE)
