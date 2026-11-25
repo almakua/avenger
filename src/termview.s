@@ -1324,6 +1324,13 @@ Ltm_draw:
     MSG bounds
     fmov d8, d2
     fmov d9, d3
+    // views do not clip to their bounds since macOS 14, rows above the top would cover the tab bar
+    mov x0, x21
+    movi d0, #0
+    movi d1, #0
+    fmov d2, d8
+    fmov d3, d9
+    bl _CGContextClipToRect
     mov x0, x21
     LADDR x1, _av_theme
     movi d0, #0
