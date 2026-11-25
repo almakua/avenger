@@ -1,4 +1,5 @@
-// tabs: model, window content (tab bar + active view), actions, prefix keys, open/save panels
+// tabs: model (one pane tree per tab), window content (tab bar + panes), actions, prefix keys,
+// open/save panels
 
 .include "macros.inc"
 .include "objc.inc"
@@ -7,23 +8,21 @@
 .include "doc.inc"
 .include "theme.inc"
 .include "keymap.inc"
+.include "pane.inc"
 
 .set MAX_TABS, 64
-.set TAB_NSVIEW, 0
-.set TAB_VIEW,   8
-.set TAB_DOC,    16
-.set TAB_KIND,   24
-.set TAB_SIZE,   32
-.set TAB_KIND_EDITOR, 1
-.set TAB_KIND_TERMINAL, 2      // TAB_DOC is 0, TAB_VIEW is the Term
+.set TAB_ROOT,  0
+.set TAB_FOCUS, 8              // leaf with the keyboard focus
+.set TAB_ZOOM,  16             // the focused leaf fills the tab
+.set TAB_SIZE,  32
 
 .set NSModalResponseOK, 1
 .set ALERT_FIRST,  1000
 .set ALERT_SECOND, 1001
 .set NSViewWidthSizable,  2
 .set NSViewHeightSizable, 16
-.set NSViewMinYMargin,    8
 .set KEY_ESC_CODE, 53
+.set DIVIDER_SLOP, 3           // points around a divider that still grab it
 
 // tab bar drawRect locals
 .set TB_TITLE, 176
@@ -35,6 +34,7 @@
     CLASSREF NSSavePanel
     CLASSREF NSAlert
     CLASSREF NSGraphicsContext
+    CLASSREF NSCursor
 
     SELDEF alloc, "alloc"
     SELDEF new, "new"
@@ -43,12 +43,17 @@
     SELDEF setAutoresizingMask, "setAutoresizingMask:"
     SELDEF addSubview, "addSubview:"
     SELDEF removeFromSuperview, "removeFromSuperview"
+    SELDEF superview, "superview"
     SELDEF setFrame, "setFrame:"
     SELDEF bounds, "bounds"
     SELDEF contentView, "contentView"
     SELDEF setContentView, "setContentView:"
     SELDEF setNeedsDisplay, "setNeedsDisplay:"
     SELDEF makeFirstResponder, "makeFirstResponder:"
+    SELDEF invalidateCursorRects, "invalidateCursorRectsForView:"
+    SELDEF addCursorRect, "addCursorRect:cursor:"
+    SELDEF resizeLeftRight, "resizeLeftRightCursor"
+    SELDEF resizeUpDown, "resizeUpDownCursor"
     SELDEF stringWithUTF8String, "stringWithUTF8String:"
     SELDEF setTitle, "setTitle:"
     SELDEF setTitleWithFile, "setTitleWithRepresentedFilename:"
@@ -77,7 +82,13 @@
     SELDEF convertPoint, "convertPoint:fromView:"
     SELDEF drawRect, "drawRect:"
     SELDEF mouseDown, "mouseDown:"
+    SELDEF mouseDragged, "mouseDragged:"
+    SELDEF mouseUp, "mouseUp:"
     SELDEF isOpaque, "isOpaque"
+    SELDEF isFlipped, "isFlipped"
+    SELDEF hitTest, "hitTest:"
+    SELDEF resizeSubviews, "resizeSubviewsWithOldSize:"
+    SELDEF resetCursorRects, "resetCursorRects"
 
     CFSTRDEF untitled, "untitled"
     CFSTRDEF empty, ""
@@ -95,8 +106,12 @@
 
     .section __TEXT,__cstring,cstring_literals
 Ltb_name:     .asciz "AvTabBar"
+Lpn_name:     .asciz "AvPanes"
 Lt_rect:      .asciz "v@:{CGRect={CGPoint=dd}{CGSize=dd}}"
+Lt_size:      .asciz "v@:{CGSize=dd}"
+Lt_hit:       .asciz "@@:{CGPoint=dd}"
 Lt_obj:       .asciz "v@:@"
+Lt_void:      .asciz "v@:"
 Lt_bool:      .asciz "c@:"
 Ls_untitled:  .asciz "untitled"
 Ls_ellipsis:  .asciz "\342\200\246"
@@ -110,14 +125,36 @@ Lcfg_template:
     .incbin "config.example.yaml"
 Lcfg_template_end:
 
+    // selector slot, IMP, type encoding
+    .section __DATA,__const
+    .p2align 3
+Ltb_methods:
+    .quad Lsr_drawRect, Ltb_draw, Lt_rect
+    .quad Lsr_mouseDown, Ltb_mouse, Lt_obj
+    .quad Lsr_isOpaque, Lyes, Lt_bool
+Ltb_methods_end:
+Lpn_methods:
+    .quad Lsr_isFlipped, Lyes, Lt_bool
+    .quad Lsr_drawRect, Lpn_draw, Lt_rect
+    .quad Lsr_resizeSubviews, Lpn_resize, Lt_size
+    .quad Lsr_hitTest, Lpn_hit, Lt_hit
+    .quad Lsr_mouseDown, Lpn_mdown, Lt_obj
+    .quad Lsr_mouseDragged, Lpn_mdrag, Lt_obj
+    .quad Lsr_mouseUp, Lpn_mup, Lt_obj
+    .quad Lsr_resetCursorRects, Lpn_cursors, Lt_void
+Lpn_methods_end:
+
     .zerofill __DATA,__bss,_av_tabs,(MAX_TABS * 8),3
     .zerofill __DATA,__bss,_av_ntabs,8,3
     .zerofill __DATA,__bss,_av_container,8,3
     .zerofill __DATA,__bss,_av_tabbar,8,3
     .zerofill __DATA,__bss,_av_prefix_pending,8,3
+    .zerofill __DATA,__bss,_av_focus_view,8,3
+    .zerofill __DATA,__bss,_av_drag_split,8,3
     .globl _av_tabs
     .globl _av_ntabs
     .globl _av_container
+    .globl _av_focus_view
     .section __DATA,__data
     .p2align 3
     .globl _av_tab_cur
@@ -133,7 +170,39 @@ _av_tab_last: .quad -1
     .text
 // ---- window content ----
 
-// void av_tabs_init(NSWindow *w): container view with the tab bar on top
+// Class make_class(const char *name, const void *methods, const void *end): NSView subclass
+    .p2align 2
+Lmake_class:
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    str x21, [sp, #32]
+    mov x9, x0
+    mov x20, x1
+    mov x21, x2
+    CLS x0, NSView
+    mov x1, x9
+    mov x2, #0
+    bl _objc_allocateClassPair
+    mov x19, x0
+1:  cmp x20, x21
+    b.hs 2f
+    ldp x9, x2, [x20]
+    ldr x3, [x20, #16]
+    ldr x1, [x9]
+    mov x0, x19
+    bl _class_addMethod
+    add x20, x20, #24
+    b 1b
+2:  mov x0, x19
+    bl _objc_registerClassPair
+    mov x0, x19
+    ldr x21, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
+
+// void av_tabs_init(NSWindow *w): flipped container with the tab bar on top and the panes below
 FUNC_BEGIN _av_tabs_init
     stp x29, x30, [sp, #-80]!
     mov x29, sp
@@ -144,7 +213,10 @@ FUNC_BEGIN _av_tabs_init
     MSG bounds
     stp d0, d1, [sp, #48]
     stp d2, d3, [sp, #64]
-    CLS x0, NSView
+    LADDR x0, Lpn_name
+    LADDR x1, Lpn_methods
+    LADDR x2, Lpn_methods_end
+    bl Lmake_class
     MSG alloc
     ldp d0, d1, [sp, #48]
     ldp d2, d3, [sp, #64]
@@ -156,29 +228,10 @@ FUNC_BEGIN _av_tabs_init
     mov x0, x19
     mov x2, x20
     MSG setContentView
-
-    CLS x0, NSView
-    LADDR x1, Ltb_name
-    mov x2, #0
-    bl _objc_allocateClassPair
-    mov x21, x0
-    LSEL x1, drawRect
-    adr x2, Ltb_draw
-    LADDR x3, Lt_rect
-    bl _class_addMethod
-    mov x0, x21
-    LSEL x1, mouseDown
-    adr x2, Ltb_mouse
-    LADDR x3, Lt_obj
-    bl _class_addMethod
-    mov x0, x21
-    LSEL x1, isOpaque
-    adr x2, Lyes
-    LADDR x3, Lt_bool
-    bl _class_addMethod
-    mov x0, x21
-    bl _objc_registerClassPair
-    mov x0, x21
+    LADDR x0, Ltb_name
+    LADDR x1, Ltb_methods
+    LADDR x2, Ltb_methods_end
+    bl Lmake_class
     MSG alloc
     movi d0, #0
     movi d1, #0
@@ -187,8 +240,6 @@ FUNC_BEGIN _av_tabs_init
     MSG initWithFrame
     mov x22, x0
     STRG x22, _av_tabbar, x9
-    mov x2, #(NSViewWidthSizable | NSViewMinYMargin)
-    MSG setAutoresizingMask
     mov x0, x20
     mov x2, x22
     MSG addSubview
@@ -211,16 +262,220 @@ Lbar_h:
     fadd d0, d0, d1
     ret
 
-// void av_tabs_layout(void): tab bar on top, active view below
+// Tab *cur_tab(void), NULL before the first tab
+    .p2align 2
+Lcur_tab:
+    LDRG x9, _av_tab_cur
+    LDRG x10, _av_ntabs
+    mov x0, #0
+    cmp x9, x10
+    b.hs 1f
+    TAB x0, x9
+1:  ret
+
+// Pane *vis_first(Tab *t) / vis_next(Tab *t, Pane *leaf): leaves on screen, only the focused one
+// while zoomed
+    .p2align 2
+Lvis_first:
+    ldr x9, [x0, #TAB_ZOOM]
+    cbz x9, 1f
+    ldr x0, [x0, #TAB_FOCUS]
+    ret
+1:  ldr x0, [x0, #TAB_ROOT]
+    b _av_pane_first
+
+    .p2align 2
+Lvis_next:
+    ldr x9, [x0, #TAB_ZOOM]
+    mov x0, x1
+    cbnz x9, 1f
+    b _av_pane_after
+1:  mov x0, #0
+    ret
+
+// void mount(Tab *t): visible panes of t into the container
+    .p2align 2
+Lmount:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    mov x19, x0
+    bl Lvis_first
+    mov x20, x0
+1:  cbz x20, 9f
+    // re-adding a subview would drop the first responder
+    ldr x0, [x20, #P_NSVIEW]
+    MSG superview
+    LDRG x9, _av_container
+    cmp x0, x9
+    b.eq 2f
+    mov x0, x9
+    ldr x2, [x20, #P_NSVIEW]
+    MSG addSubview
+2:  mov x0, x19
+    mov x1, x20
+    bl Lvis_next
+    mov x20, x0
+    b 1b
+9:  ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// void unmount(Tab *t, Pane *keep): panes of t out of the container except keep (may be NULL)
+    .p2align 2
+Lunmount:
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    str x21, [sp, #32]
+    mov x19, x0
+    mov x21, x1
+    ldr x0, [x19, #TAB_ROOT]
+    cbz x0, 9f
+    bl _av_pane_first
+    mov x20, x0
+1:  cbz x20, 9f
+    cmp x20, x21
+    b.eq 2f
+    ldr x0, [x20, #P_NSVIEW]
+    MSG removeFromSuperview
+2:  mov x0, x20
+    bl _av_pane_after
+    mov x20, x0
+    b 1b
+9:  ldr x21, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
+
+// void unzoom(Tab *t): back to all panes
+    .p2align 2
+Lunzoom:
+    ldr x9, [x0, #TAB_ZOOM]
+    cbz x9, 1f
+    str xzr, [x0, #TAB_ZOOM]
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x19, [sp, #16]
+    mov x19, x0
+    bl Lcur_tab
+    cmp x0, x19
+    b.ne 2f
+    mov x0, x19
+    bl Lmount
+    bl _av_tabs_layout
+2:  ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
+1:  ret
+
+// focus follows the active tab's focused pane: first responder, window title, tab bar
+    .p2align 2
+Lsync_focus:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    bl Lcur_tab
+    cbz x0, 1f
+    ldr x0, [x0, #TAB_FOCUS]
+    cbz x0, 1f
+    ldr x0, [x0, #P_NSVIEW]
+1:  STRG x0, _av_focus_view, x9
+    mov x2, x0
+    LDRG x0, _av_window
+    cbz x0, 2f
+    cbz x2, 2f
+    MSG makeFirstResponder
+2:  bl _av_tabs_update_window
+    bl _av_tabbar_redraw
+    ldp x29, x30, [sp], #16
+    ret
+
+// void set_focus(Tab *t, Pane *leaf): both panes redraw their cursor
+    .p2align 2
+Lset_focus:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    mov x19, x0
+    mov x20, x1
+    ldr x0, [x19, #TAB_FOCUS]
+    str x20, [x19, #TAB_FOCUS]
+    cbz x0, 1f
+    cmp x0, x20
+    b.eq 1f
+    ldr x0, [x0, #P_NSVIEW]
+    mov x2, #1
+    MSG setNeedsDisplay
+1:  bl Lcur_tab
+    cmp x0, x19
+    b.ne 9f
+    ldr x0, [x20, #P_NSVIEW]
+    mov x2, #1
+    MSG setNeedsDisplay
+    bl Lsync_focus
+9:  ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// void set_focus_any(Tab *t, Pane *leaf): also leaves a zoom that hides leaf
+    .p2align 2
+Lset_focus_any:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    mov x19, x0
+    mov x20, x1
+    ldr x9, [x19, #TAB_FOCUS]
+    cmp x9, x20
+    b.eq 1f
+    bl Lunzoom
+1:  mov x0, x19
+    mov x1, x20
+    bl Lset_focus
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// void av_tabs_focus_view(NSView *v): a click moved the focus to the pane showing v
+FUNC_BEGIN _av_tabs_focus_view
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    str x21, [sp, #32]
+    mov x21, x0
+    bl Lcur_tab
+    cbz x0, 9f
+    mov x19, x0
+    ldr x0, [x19, #TAB_ROOT]
+    bl _av_pane_first
+    mov x20, x0
+1:  cbz x20, 9f
+    ldr x9, [x20, #P_NSVIEW]
+    cmp x9, x21
+    b.eq 2f
+    mov x0, x20
+    bl _av_pane_after
+    mov x20, x0
+    b 1b
+2:  ldr x9, [x19, #TAB_FOCUS]
+    cmp x9, x20
+    b.eq 9f
+    mov x0, x19
+    mov x1, x20
+    bl Lset_focus
+9:  ldr x21, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
+
+// void av_tabs_layout(void): tab bar on top, the active tab's visible panes below
 FUNC_BEGIN _av_tabs_layout
     stp x29, x30, [sp, #-64]!
     mov x29, sp
-    str x19, [sp, #16]
-    stp d8, d9, [sp, #24]
-    str d10, [sp, #40]
-    LDRG x19, _av_container
-    cbz x19, 9f
-    mov x0, x19
+    stp x19, x20, [sp, #16]
+    stp d8, d9, [sp, #32]
+    str d10, [sp, #48]
+    LDRG x0, _av_container
+    cbz x0, 9f
     MSG bounds
     fmov d8, d2
     fmov d9, d3
@@ -228,21 +483,49 @@ FUNC_BEGIN _av_tabs_layout
     fmov d10, d0
     LDRG x0, _av_tabbar
     movi d0, #0
-    fsub d1, d9, d10
+    movi d1, #0
     fmov d2, d8
     fmov d3, d10
     MSG setFrame
-    bl _av_tabs_current_view
-    cbz x0, 1f
-    movi d0, #0
-    movi d1, #0
+    bl Lcur_tab
+    cbz x0, 8f
+    mov x19, x0
+    ldr x0, [x19, #TAB_ROOT]
+    ldr x9, [x19, #TAB_ZOOM]
+    cbz x9, 1f
+    ldr x0, [x19, #TAB_FOCUS]
+1:  movi d0, #0
+    fmov d1, d10
     fmov d2, d8
     fsub d3, d9, d10
+    bl _av_pane_layout
+    mov x0, x19
+    bl Lvis_first
+    mov x20, x0
+2:  cbz x20, 8f
+    ldr x0, [x20, #P_NSVIEW]
+    ldp d0, d1, [x20, #P_X]
+    ldp d2, d3, [x20, #P_W]
     MSG setFrame
-1:  bl _av_tabbar_redraw
-9:  ldr d10, [sp, #40]
-    ldp d8, d9, [sp, #24]
-    ldr x19, [sp, #16]
+    ldr x0, [x20, #P_NSVIEW]
+    mov x2, #1
+    MSG setNeedsDisplay
+    mov x0, x19
+    mov x1, x20
+    bl Lvis_next
+    mov x20, x0
+    b 2b
+8:  LDRG x0, _av_container
+    mov x2, #1
+    MSG setNeedsDisplay
+    LDRG x0, _av_window
+    cbz x0, 81f
+    LDRG x2, _av_container
+    MSG invalidateCursorRects
+81: bl _av_tabbar_redraw
+9:  ldr d10, [sp, #48]
+    ldp d8, d9, [sp, #32]
+    ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #64
     ret
 
@@ -255,27 +538,225 @@ FUNC_BEGIN _av_tabbar_redraw
     b _objc_msgSend
 1:  ret
 
-// NSView *av_tabs_current_view(void)
+// NSView *av_tabs_current_view(void): the focused pane
 FUNC_BEGIN _av_tabs_current_view
-    LDRG x9, _av_tab_cur
-    LDRG x10, _av_ntabs
-    mov x0, #0
-    cmp x9, x10
-    b.hs 1f
-    TAB x0, x9
-    ldr x0, [x0, #TAB_NSVIEW]
-1:  ret
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    bl Lcur_tab
+    cbz x0, 1f
+    ldr x0, [x0, #TAB_FOCUS]
+    ldr x0, [x0, #P_NSVIEW]
+1:  ldp x29, x30, [sp], #16
+    ret
 
-// Doc *av_tabs_current_doc(void)
+// Doc *av_tabs_current_doc(void): doc of the focused pane, NULL for terminals
 FUNC_BEGIN _av_tabs_current_doc
-    LDRG x9, _av_tab_cur
-    LDRG x10, _av_ntabs
-    mov x0, #0
-    cmp x9, x10
-    b.hs 1f
-    TAB x0, x9
-    ldr x0, [x0, #TAB_DOC]
-1:  ret
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    bl Lcur_tab
+    cbz x0, 1f
+    ldr x0, [x0, #TAB_FOCUS]
+    ldr x0, [x0, #P_DOC]
+1:  ldp x29, x30, [sp], #16
+    ret
+
+// ---- pane container view (flipped) ----
+
+// resizeSubviewsWithOldSize: lays everything out again
+    .p2align 2
+Lpn_resize:
+    b _av_tabs_layout
+
+// drawRect: only the gaps between panes show, in the divider color
+    .p2align 2
+Lpn_draw:
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp d0, d1, [sp, #16]
+    stp d2, d3, [sp, #32]
+    CLS x0, NSGraphicsContext
+    MSG currentContext
+    MSG CGContext
+    LADDR x1, _av_theme
+    add x1, x1, #T_INDENT
+    ldp d0, d1, [sp, #16]
+    ldp d2, d3, [sp, #32]
+    bl _av_fill
+    ldp x29, x30, [sp], #48
+    ret
+
+// Pane *divider_at(double x, double y): split of the active tab whose divider is near the point
+    .p2align 2
+Ldivider_at:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp d8, d9, [sp, #16]
+    fmov d8, d0
+    fmov d9, d1
+    bl Lcur_tab
+    cbz x0, 9f
+    ldr x9, [x0, #TAB_ZOOM]
+    ldr x0, [x0, #TAB_ROOT]
+    cbnz x9, 8f
+    fmov d0, d8
+    fmov d1, d9
+    mov x9, #DIVIDER_SLOP
+    ucvtf d2, x9
+    bl _av_pane_divider_at
+    b 9f
+8:  mov x0, #0
+9:  ldp d8, d9, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// (x, y) ev_point(NSView *self, NSEvent *e): event location in self
+    .p2align 2
+Lev_point:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x19, [sp, #16]
+    mov x19, x0
+    mov x0, x1
+    MSG locationInWindow
+    mov x0, x19
+    mov x2, #0
+    MSG convertPoint
+    ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// hitTest: the container takes clicks near a divider, everything else goes to the panes
+    .p2align 2
+Lpn_hit:
+    stp x29, x30, [sp, #-64]!
+    mov x29, sp
+    str x19, [sp, #16]
+    stp d8, d9, [sp, #24]
+    mov x19, x0
+    fmov d8, d0
+    fmov d9, d1
+    MSG superview
+    mov x2, x0
+    mov x0, x19
+    fmov d0, d8
+    fmov d1, d9
+    MSG convertPoint
+    bl Ldivider_at
+    cbz x0, 1f
+    mov x0, x19
+    b 9f
+    // [super hitTest:] through objc_super {receiver, super_class}
+1:  str x19, [sp, #40]
+    CLS x9, NSView
+    str x9, [sp, #48]
+    add x0, sp, #40
+    LSEL x1, hitTest
+    fmov d0, d8
+    fmov d1, d9
+    bl _objc_msgSendSuper
+9:  ldp d8, d9, [sp, #24]
+    ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #64
+    ret
+
+    .p2align 2
+Lpn_mdown:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    mov x1, x2
+    bl Lev_point
+    bl Ldivider_at
+    STRG x0, _av_drag_split, x9
+    ldp x29, x30, [sp], #16
+    ret
+
+    .p2align 2
+Lpn_mdrag:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x19, [sp, #16]
+    LDRG x19, _av_drag_split
+    cbz x19, 9f
+    mov x1, x2
+    bl Lev_point
+    mov x0, x19
+    bl _av_pane_drag
+    bl _av_tabs_layout
+9:  ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+    .p2align 2
+Lpn_mup:
+    STRG xzr, _av_drag_split, x9
+    ret
+
+// resetCursorRects: resize cursors over the dividers
+    .p2align 2
+Lpn_cursors:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    bl Lcur_tab
+    cbz x0, 9f
+    ldr x9, [x0, #TAB_ZOOM]
+    cbnz x9, 9f
+    ldr x0, [x0, #TAB_ROOT]
+    bl Lcursor_walk
+9:  ldp x29, x30, [sp], #16
+    ret
+
+// void cursor_walk(Pane *n): cursor rect for the divider of split n, then its children
+    .p2align 2
+Lcursor_walk:
+    stp x29, x30, [sp, #-64]!
+    mov x29, sp
+    str x19, [sp, #16]
+    mov x19, x0
+    ldr x9, [x19, #P_KIND]
+    cmp x9, #PK_ROW
+    b.lo 9f
+    ldr x10, [x19, #P_A]
+    mov x11, #DIVIDER_SLOP
+    ucvtf d4, x11
+    fadd d5, d4, d4
+    fmov d6, #1.0
+    fadd d5, d5, d6
+    b.ne 1f
+    ldr d0, [x10, #P_X]
+    ldr d1, [x10, #P_W]
+    fadd d0, d0, d1
+    fsub d0, d0, d4
+    ldr d1, [x19, #P_Y]
+    fmov d2, d5
+    ldr d3, [x19, #P_H]
+    stp d0, d1, [sp, #32]
+    stp d2, d3, [sp, #48]
+    CLS x0, NSCursor
+    MSG resizeLeftRight
+    b 2f
+1:  ldr d0, [x19, #P_X]
+    ldr d1, [x10, #P_Y]
+    ldr d2, [x10, #P_H]
+    fadd d1, d1, d2
+    fsub d1, d1, d4
+    ldr d2, [x19, #P_W]
+    fmov d3, d5
+    stp d0, d1, [sp, #32]
+    stp d2, d3, [sp, #48]
+    CLS x0, NSCursor
+    MSG resizeUpDown
+2:  mov x2, x0
+    LDRG x0, _av_container
+    ldp d0, d1, [sp, #32]
+    ldp d2, d3, [sp, #48]
+    MSG addCursorRect
+    ldr x0, [x19, #P_A]
+    bl Lcursor_walk
+    ldr x0, [x19, #P_B]
+    bl Lcursor_walk
+9:  ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #64
+    ret
 
 // ---- tab lifecycle ----
 
@@ -297,33 +778,71 @@ Lstrdup:
     ldp x29, x30, [sp], #32
     ret
 
-// long av_tab_find(const char *path), -1 if no tab has this file
-FUNC_BEGIN _av_tab_find
-    stp x29, x30, [sp, #-32]!
+// (index, leaf) find(const char *path): tab and pane showing this file, index -1 if none
+    .p2align 2
+Lfind:
+    stp x29, x30, [sp, #-48]!
     mov x29, sp
     stp x19, x20, [sp, #16]
+    str x21, [sp, #32]
     mov x19, x0
     mov x20, #0
 1:  LDRG x9, _av_ntabs
     cmp x20, x9
-    b.hs 3f
+    b.hs 4f
     TAB x9, x20
-    ldr x9, [x9, #TAB_DOC]
-    cbz x9, 2f
+    ldr x0, [x9, #TAB_ROOT]
+    bl _av_pane_first
+    mov x21, x0
+2:  cbz x21, 3f
+    ldr x9, [x21, #P_DOC]
+    cbz x9, 21f
     ldr x0, [x9, #DOC_PATH]
-    cbz x0, 2f
+    cbz x0, 21f
     mov x1, x19
     bl _strcmp
-    cbz w0, 4f
-2:  add x20, x20, #1
+    cbz w0, 5f
+21: mov x0, x21
+    bl _av_pane_after
+    mov x21, x0
+    b 2b
+3:  add x20, x20, #1
     b 1b
-3:  mov x20, #-1
-4:  mov x0, x20
+4:  mov x20, #-1
+    mov x21, #0
+5:  mov x0, x20
+    mov x1, x21
+    ldr x21, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
+
+// long av_tab_find(const char *path), -1 if no tab shows this file
+FUNC_BEGIN _av_tab_find
+    b Lfind
+
+// long new_tab(Pane *leaf): appends a tab holding just leaf, returns its index
+    .p2align 2
+Lnew_tab:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    mov x19, x0
+    mov x0, #TAB_SIZE
+    bl _av_arena_alloc
+    mov x20, x0
+    stp x19, x19, [x20, #TAB_ROOT]
+    LDRG x9, _av_ntabs
+    LADDR x10, _av_tabs
+    str x20, [x10, x9, lsl #3]
+    add x10, x9, #1
+    STRG x10, _av_ntabs, x11
+    mov x0, x9
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
 
-// long av_tab_open(const char *path or NULL): focuses an existing tab for the same file
+// long av_tab_open(const char *path or NULL): focuses an existing pane for the same file
 FUNC_BEGIN _av_tab_open
     stp x29, x30, [sp, #-48]!
     mov x29, sp
@@ -331,9 +850,12 @@ FUNC_BEGIN _av_tab_open
     stp x21, x22, [sp, #32]
     mov x19, x0
     cbz x19, 1f
-    bl _av_tab_find
+    bl Lfind
     tbnz x0, #63, 1f
     mov x19, x0
+    TAB x0, x19
+    bl Lset_focus_any
+    mov x0, x19
     bl _av_tab_activate
     mov x0, x19
     b 9f
@@ -351,25 +873,14 @@ FUNC_BEGIN _av_tab_open
 3:  mov x0, x20
     bl _av_editor_create
     mov x21, x0
-    mov x2, #(NSViewWidthSizable | NSViewHeightSizable)
-    MSG setAutoresizingMask
-    mov x0, #TAB_SIZE
-    bl _av_arena_alloc
-    mov x22, x0
-    str x21, [x22, #TAB_NSVIEW]
-    str x20, [x22, #TAB_DOC]
-    mov x9, #TAB_KIND_EDITOR
-    str x9, [x22, #TAB_KIND]
-    mov x0, x21
     bl _av_editor_state
-    str x0, [x22, #TAB_VIEW]
-    LDRG x9, _av_ntabs
-    LADDR x10, _av_tabs
-    str x22, [x10, x9, lsl #3]
-    add x19, x9, #1
-    STRG x19, _av_ntabs, x10
-    sub x19, x19, #1
-    mov x0, x19
+    mov x2, x0
+    mov x0, #PK_EDITOR
+    mov x1, x21
+    mov x3, x20
+    bl _av_pane_leaf
+    bl Lnew_tab
+    mov x19, x0
     bl _av_tab_activate
     mov x0, x19
     b 9f
@@ -392,28 +903,19 @@ FUNC_BEGIN _av_tab_open_term
     bl _av_term_create
     cbz x0, 8f
     mov x21, x0
-    mov x2, #(NSViewWidthSizable | NSViewHeightSizable)
-    MSG setAutoresizingMask
-    mov x0, #TAB_SIZE
-    bl _av_arena_alloc
-    mov x22, x0
-    str x21, [x22, #TAB_NSVIEW]
-    mov x9, #TAB_KIND_TERMINAL
-    str x9, [x22, #TAB_KIND]
-    mov x0, x21
     bl _av_term_state
     mov x20, x0
-    str x20, [x22, #TAB_VIEW]
-    LDRG x9, _av_ntabs
-    LADDR x10, _av_tabs
-    str x22, [x10, x9, lsl #3]
-    add x19, x9, #1
-    STRG x19, _av_ntabs, x10
-    sub x19, x19, #1
+    mov x2, x0
+    mov x0, #PK_TERMINAL
+    mov x1, x21
+    mov x3, #0
+    bl _av_pane_leaf
+    bl Lnew_tab
+    mov x19, x0
     // activating lays the view out, so the shell starts with the right size
-    mov x0, x19
     bl _av_tab_activate
     mov x0, x20
+    mov x1, #0
     bl _av_term_start
     cbnz x0, 7f
     mov x0, x19
@@ -427,29 +929,42 @@ FUNC_BEGIN _av_tab_open_term
     ldp x29, x30, [sp], #48
     ret
 
-// void av_tabs_term_exited(Term *t): the shell is gone, close its tab if still open
+// void av_tabs_term_exited(Term *t): the shell is gone, close its pane if still open
 FUNC_BEGIN _av_tabs_term_exited
-    stp x29, x30, [sp, #-32]!
+    stp x29, x30, [sp, #-48]!
     mov x29, sp
     stp x19, x20, [sp, #16]
+    str x21, [sp, #32]
     mov x19, x0
     mov x20, #0
 1:  LDRG x9, _av_ntabs
     cmp x20, x9
     b.hs 9f
-    TAB x10, x20
-    ldr x11, [x10, #TAB_DOC]
-    cbnz x11, 2f
-    ldr x11, [x10, #TAB_VIEW]
-    cmp x11, x19
-    b.ne 2f
+    TAB x9, x20
+    ldr x0, [x9, #TAB_ROOT]
+    bl _av_pane_first
+    mov x21, x0
+2:  cbz x21, 3f
+    ldr x9, [x21, #P_KIND]
+    cmp x9, #PK_TERMINAL
+    b.ne 21f
+    ldr x9, [x21, #P_VIEW]
+    cmp x9, x19
+    b.ne 21f
     mov x0, x20
-    bl _av_tab_close
+    mov x1, x21
+    mov x2, #0
+    bl Lclose_leaf
     b 9f
-2:  add x20, x20, #1
+21: mov x0, x21
+    bl _av_pane_after
+    mov x21, x0
+    b 2b
+3:  add x20, x20, #1
     b 1b
-9:  ldp x19, x20, [sp, #16]
-    ldp x29, x30, [sp], #32
+9:  ldr x21, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
     ret
 
 // void av_tab_activate(size_t i)
@@ -464,39 +979,35 @@ FUNC_BEGIN _av_tab_activate
     LDRG x20, _av_tab_cur
     cmp x20, x19
     b.eq 2f
-    // detach the previous view, it stays alive with its tab
+    // detach the previous tab's panes, they stay alive with it
     cmp x20, x9
     b.hs 1f
-    TAB x10, x20
-    ldr x0, [x10, #TAB_NSVIEW]
-    MSG removeFromSuperview
+    TAB x0, x20
+    mov x1, #0
+    bl Lunmount
     STRG x20, _av_tab_last, x9
 1:  STRG x19, _av_tab_cur, x9
-    TAB x10, x19
-    ldr x2, [x10, #TAB_NSVIEW]
-    LDRG x0, _av_container
-    MSG addSubview
+    TAB x0, x19
+    bl Lmount
     bl _av_tabs_layout
-2:  bl _av_tabs_current_view
-    mov x2, x0
-    LDRG x0, _av_window
-    cbz x0, 3f
-    MSG makeFirstResponder
-3:  bl _av_tabs_update_window
-    bl _av_tabbar_redraw
+2:  bl Lsync_focus
 9:  ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
 
-// void av_tabs_update_window(void): title, proxy icon and edited dot of the active tab
+// void av_tabs_update_window(void): title, proxy icon and edited dot of the focused pane
 FUNC_BEGIN _av_tabs_update_window
-    stp x29, x30, [sp, #-32]!
+    stp x29, x30, [sp, #-48]!
     mov x29, sp
     stp x19, x20, [sp, #16]
+    str x21, [sp, #32]
     LDRG x19, _av_window
     cbz x19, 9f
-    bl _av_tabs_current_doc
-    mov x20, x0
+    bl Lcur_tab
+    cbz x0, 9f
+    ldr x21, [x0, #TAB_FOCUS]
+    cbz x21, 9f
+    ldr x20, [x21, #P_DOC]
     cbz x20, 3f
     ldr x2, [x20, #DOC_PATH]
     cbz x2, 1f
@@ -518,12 +1029,7 @@ FUNC_BEGIN _av_tabs_update_window
     MSG setDocumentEdited
     b 9f
     // terminal: the program's title, no proxy icon
-3:  LDRG x9, _av_tab_cur
-    LDRG x10, _av_ntabs
-    cmp x9, x10
-    b.hs 9f
-    TAB x10, x9
-    ldr x0, [x10, #TAB_VIEW]
+3:  ldr x0, [x21, #P_VIEW]
     bl _av_term_title
     mov x2, x0
     CLS x0, NSString
@@ -537,10 +1043,10 @@ FUNC_BEGIN _av_tabs_update_window
     mov x0, x19
     mov x2, #0
     MSG setDocumentEdited
-9:  ldp x19, x20, [sp, #16]
-    ldp x29, x30, [sp], #32
+9:  ldr x21, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
     ret
-
 // long alert(NSString *msg, NSString *info, NSString *b1, NSString *b2, NSString *b3), modal response
     .p2align 2
 Lalert:
@@ -604,15 +1110,46 @@ Ldisplay_name:
     ldp x29, x30, [sp], #32
     ret
 
-// const char *tab_name(Tab *t): file name, or the terminal title
+// const char *leaf_name(Pane *leaf): file name, or the terminal title
     .p2align 2
-Ltab_name:
-    ldr x9, [x0, #TAB_DOC]
+Lleaf_name:
+    ldr x9, [x0, #P_DOC]
     cbz x9, 1f
     mov x0, x9
     b Ldisplay_name
-1:  ldr x0, [x0, #TAB_VIEW]
+1:  ldr x0, [x0, #P_VIEW]
     b _av_term_title
+
+// const char *tab_name(Tab *t): name of the focused pane
+    .p2align 2
+Ltab_name:
+    ldr x0, [x0, #TAB_FOCUS]
+    b Lleaf_name
+
+// int tab_dirty(Tab *t): 1 when a pane shows a doc with unsaved changes
+    .p2align 2
+Ltab_dirty:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x19, [sp, #16]
+    ldr x0, [x0, #TAB_ROOT]
+    bl _av_pane_first
+    mov x19, x0
+1:  cbz x19, 8f
+    ldr x9, [x19, #P_DOC]
+    cbz x9, 2f
+    ldr x9, [x9, #BUF_FLAGS]
+    tbnz x9, #0, 7f
+2:  mov x0, x19
+    bl _av_pane_after
+    mov x19, x0
+    b 1b
+7:  mov x0, #1
+    b 9f
+8:  mov x0, #0
+9:  ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
 
 // const char *save_panel(void): chosen path (arena copy) or NULL
     .p2align 2
@@ -636,17 +1173,15 @@ Lsave_panel:
     ldp x29, x30, [sp], #32
     ret
 
-// int av_tab_save(size_t i): untitled tabs ask for a path first; 0 on success
-FUNC_BEGIN _av_tab_save
+// int save_leaf(Pane *leaf): untitled docs ask for a path first; 0 on success
+    .p2align 2
+Lsave_leaf:
     stp x29, x30, [sp, #-48]!
     mov x29, sp
     stp x19, x20, [sp, #16]
-    stp x21, x22, [sp, #32]
-    LDRG x9, _av_ntabs
-    cmp x0, x9
-    b.hs 8f
-    TAB x19, x0
-    ldr x20, [x19, #TAB_DOC]
+    str x21, [sp, #32]
+    mov x19, x0
+    ldr x20, [x19, #P_DOC]
     cbz x20, 7f
     ldr x21, [x20, #DOC_PATH]
     cbnz x21, 1f
@@ -661,7 +1196,7 @@ FUNC_BEGIN _av_tab_save
     bl _av_buf_save
     cbnz x0, 7f
     bl _av_config_reload_if_changed
-    ldr x0, [x19, #TAB_NSVIEW]
+    ldr x0, [x19, #P_NSVIEW]
     mov x2, #1
     MSG setNeedsDisplay
     bl _av_tabs_update_window
@@ -670,12 +1205,185 @@ FUNC_BEGIN _av_tab_save
     b 9f
 7:  bl _NSBeep
 8:  mov x0, #-1
+9:  ldr x21, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
+
+// int av_tab_save(size_t i): saves the focused pane of tab i; 0 on success
+FUNC_BEGIN _av_tab_save
+    LDRG x9, _av_ntabs
+    cmp x0, x9
+    b.hs 1f
+    TAB x9, x0
+    ldr x0, [x9, #TAB_FOCUS]
+    b Lsave_leaf
+1:  mov x0, #-1
+    ret
+
+// int ask_leaf(Pane *leaf, int whole_tab): confirms closing, saving if asked; 1 to go ahead
+// a pane whose doc stays open in another pane goes without asking, unless the whole tab closes
+    .p2align 2
+Lask_leaf:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    mov x19, x0
+    ldr x20, [x19, #P_DOC]
+    cbz x20, 5f
+    ldr x9, [x20, #BUF_FLAGS]
+    tbz x9, #0, 8f
+    cbnz x1, 1f
+    ldr x9, [x20, #DOC_VIEWS]
+    ldr x9, [x9, #V_NEXT]
+    cbnz x9, 8f
+1:  mov x0, x20
+    bl Ldisplay_name
+    mov x2, x0
+    CLS x0, NSString
+    MSG stringWithUTF8String
+    mov x1, x0
+    CFSTR x0, askSave
+    CFSTR x2, bSave
+    CFSTR x3, bDontSave
+    CFSTR x4, bCancel
+    bl Lalert
+    cmp x0, #ALERT_SECOND
+    b.eq 8f
+    cmp x0, #ALERT_FIRST
+    b.ne 7f
+    mov x0, x19
+    bl Lsave_leaf
+    cbnz x0, 7f
+    b 8f
+    // terminal: ask only when a job other than the shell is running
+5:  ldr x0, [x19, #P_VIEW]
+    bl _av_term_busy
+    cbz w0, 8f
+    CFSTR x0, askKill
+    mov x1, #0
+    CFSTR x2, bTerminate
+    CFSTR x3, bCancel
+    mov x4, #0
+    bl Lalert
+    cmp x0, #ALERT_FIRST
+    b.ne 7f
+8:  mov w0, #1
+    b 9f
+7:  mov w0, #0
+9:  ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// int seen_before(Tab *t, Pane *leaf): an earlier pane of t shows the same doc
+    .p2align 2
+Lseen_before:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    ldr x19, [x1, #P_DOC]
+    mov x20, x1
+    cbz x19, 8f
+    ldr x0, [x0, #TAB_ROOT]
+    bl _av_pane_first
+1:  cmp x0, x20
+    b.eq 8f
+    ldr x9, [x0, #P_DOC]
+    cmp x9, x19
+    b.eq 7f
+    bl _av_pane_after
+    b 1b
+7:  mov x0, #1
+    b 9f
+8:  mov x0, #0
+9:  ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// void destroy_leaf(Pane *leaf): view gone, doc freed with its last pane, shell hung up
+    .p2align 2
+Ldestroy_leaf:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    mov x19, x0
+    ldr x0, [x19, #P_NSVIEW]
+    LDRG x9, _av_focus_view
+    cmp x0, x9
+    b.ne 1f
+    STRG xzr, _av_focus_view, x9
+1:  MSG removeFromSuperview
+    ldr x0, [x19, #P_NSVIEW]
+    MSG release
+    ldr x20, [x19, #P_DOC]
+    cbz x20, 2f
+    mov x0, x20
+    ldr x1, [x19, #P_VIEW]
+    bl _av_doc_detach
+    cbnz x0, 9f
+    mov x0, x20
+    bl _av_doc_free
+    b 9f
+2:  ldr x0, [x19, #P_VIEW]
+    bl _av_term_destroy
+9:  ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// int close_leaf(size_t i, Pane *leaf, int ask): 1 closed, 0 cancelled; the last pane closes the tab
+    .p2align 2
+Lclose_leaf:
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    mov x19, x0
+    mov x20, x1
+    mov x22, x2
+    TAB x21, x19
+    ldr x9, [x21, #TAB_ROOT]
+    cmp x9, x20
+    b.ne 1f
+    mov x0, x19
+    bl _av_tab_close
+    b 9f
+1:  cbz x22, 2f
+    mov x0, x20
+    mov x1, #0
+    bl Lask_leaf
+    cbz w0, 8f
+2:  mov x0, x20
+    bl Ldestroy_leaf
+    ldr x9, [x21, #TAB_FOCUS]
+    cmp x9, x20
+    b.ne 3f
+    str xzr, [x21, #TAB_FOCUS]
+3:  add x0, x21, #TAB_ROOT
+    mov x1, x20
+    bl _av_pane_remove
+    ldr x22, [x21, #TAB_FOCUS]
+    cbnz x22, 4f
+    mov x22, x0
+4:  str xzr, [x21, #TAB_ZOOM]
+    bl Lcur_tab
+    cmp x0, x21
+    b.ne 5f
+    mov x0, x21
+    bl Lmount
+    bl _av_tabs_layout
+5:  mov x0, x21
+    mov x1, x22
+    bl Lset_focus
+    bl _av_tabbar_redraw
+    mov x0, #1
+    b 9f
+8:  mov x0, #0
 9:  ldp x21, x22, [sp, #32]
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #48
     ret
 
-// int av_tab_close(size_t i): asks about unsaved changes; 1 closed, 0 cancelled
+// int av_tab_close(size_t i): asks about unsaved changes and running jobs; 1 closed, 0 cancelled
 // closing the last tab closes the window (and the app)
 FUNC_BEGIN _av_tab_close
     stp x29, x30, [sp, #-64]!
@@ -688,51 +1396,32 @@ FUNC_BEGIN _av_tab_close
     cmp x19, x9
     b.hs Lc_cancel
     TAB x20, x19
-    ldr x21, [x20, #TAB_DOC]
-    cbz x21, 11f
-    ldr x9, [x21, #BUF_FLAGS]
-    tbz x9, #0, 2f
+    // every pane confirms first, each doc once
+    ldr x0, [x20, #TAB_ROOT]
+    bl _av_pane_first
+    mov x21, x0
+1:  cbz x21, 2f
+    mov x0, x20
+    mov x1, x21
+    bl Lseen_before
+    cbnz x0, 11f
     mov x0, x21
-    bl Ldisplay_name
-    mov x2, x0
-    CLS x0, NSString
-    MSG stringWithUTF8String
-    mov x1, x0
-    CFSTR x0, askSave
-    CFSTR x2, bSave
-    CFSTR x3, bDontSave
-    CFSTR x4, bCancel
-    bl Lalert
-    cmp x0, #ALERT_SECOND
-    b.eq 2f
-    cmp x0, #ALERT_FIRST
-    b.ne Lc_cancel
-    mov x0, x19
-    bl _av_tab_save
-    cbnz x0, Lc_cancel
-    b 2f
-    // terminal: ask only when a job other than the shell is running
-11: ldr x0, [x20, #TAB_VIEW]
-    bl _av_term_busy
-    cbz w0, 2f
-    CFSTR x0, askKill
-    mov x1, #0
-    CFSTR x2, bTerminate
-    CFSTR x3, bCancel
-    mov x4, #0
-    bl Lalert
-    cmp x0, #ALERT_FIRST
-    b.ne Lc_cancel
-2:  ldr x0, [x20, #TAB_NSVIEW]
-    MSG removeFromSuperview
-    ldr x0, [x20, #TAB_NSVIEW]
-    MSG release
-    cbz x21, 21f
-    mov x0, x21
-    bl _av_doc_free
-    b 22f
-21: ldr x0, [x20, #TAB_VIEW]
-    bl _av_term_destroy
+    mov x1, #1
+    bl Lask_leaf
+    cbz w0, Lc_cancel
+11: mov x0, x21
+    bl _av_pane_after
+    mov x21, x0
+    b 1b
+2:  ldr x0, [x20, #TAB_ROOT]
+    cbz x0, 22f
+    bl _av_pane_first
+    mov x21, x0
+    bl Ldestroy_leaf
+    add x0, x20, #TAB_ROOT
+    mov x1, x21
+    bl _av_pane_remove
+    b 2b
 22:
     // remove slot i
     LDRG x22, _av_ntabs
@@ -790,21 +1479,29 @@ Lc_cancel:
 FUNC_BEGIN _av_tabs_confirm_quit
     stp x29, x30, [sp, #-32]!
     mov x29, sp
-    str x19, [sp, #16]
+    stp x19, x20, [sp, #16]
     mov x19, #0
 1:  LDRG x9, _av_ntabs
     cmp x19, x9
     b.hs 3f
     TAB x9, x19
-    ldr x10, [x9, #TAB_DOC]
+    ldr x0, [x9, #TAB_ROOT]
+    bl _av_pane_first
+    mov x20, x0
+10: cbz x20, 14f
+    ldr x10, [x20, #P_DOC]
     cbz x10, 11f
     ldr x10, [x10, #BUF_FLAGS]
     tbnz x10, #0, 2f
     b 12f
-11: ldr x0, [x9, #TAB_VIEW]
+11: ldr x0, [x20, #P_VIEW]
     bl _av_term_busy
     cbnz w0, 21f
-12: add x19, x19, #1
+12: mov x0, x20
+    bl _av_pane_after
+    mov x20, x0
+    b 10b
+14: add x19, x19, #1
     b 1b
 2:  CFSTR x0, unsaved
     CFSTR x1, quitInfo
@@ -819,13 +1516,13 @@ FUNC_BEGIN _av_tabs_confirm_quit
     cset w0, eq
     b 4f
 3:  mov w0, #1
-4:  ldr x19, [sp, #16]
+4:  ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
 
 // ---- actions ----
 
-// open panel; an untouched untitled tab is replaced by the opened files
+// open panel; an untouched untitled tab with a single pane is replaced by the opened files
     .p2align 2
 Lopen_panel:
     stp x29, x30, [sp, #-64]!
@@ -843,6 +1540,12 @@ Lopen_panel:
     cmp x0, #NSModalResponseOK
     b.ne 9f
     mov x23, #-1
+    bl Lcur_tab
+    cbz x0, 1f
+    ldr x9, [x0, #TAB_ROOT]
+    ldr x9, [x9, #P_KIND]
+    cmp x9, #PK_ROW
+    b.hs 1f
     bl _av_tabs_current_doc
     cbz x0, 1f
     ldr x9, [x0, #DOC_PATH]
@@ -912,8 +1615,9 @@ Lopen_config:
     bl _av_tab_open
     tbnz x0, #63, 9f
     cbz x20, 9f
-    TAB x19, x0
-    ldr x21, [x19, #TAB_DOC]
+    TAB x9, x0
+    ldr x19, [x9, #TAB_FOCUS]
+    ldr x21, [x19, #P_DOC]
     mov x0, x21
     bl _av_buf_len
     cbnz x0, 9f
@@ -924,7 +1628,7 @@ Lopen_config:
     sub x3, x3, x2
     mov x4, #0
     bl _av_doc_insert
-    ldr x0, [x19, #TAB_NSVIEW]
+    ldr x0, [x19, #P_NSVIEW]
     mov x2, #1
     MSG setNeedsDisplay
     bl _av_tabs_update_window
@@ -933,6 +1637,235 @@ Lopen_config:
     ldr x21, [sp, #32]
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #48
+    ret
+
+// void split(size_t kind, int terminal): new pane right of (PK_ROW) or below (PK_COL) the focused
+// one; editors get a second view on their doc, terminals and the terminal variant a new shell
+    .p2align 2
+Lsplit:
+    stp x29, x30, [sp, #-96]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    stp x23, x24, [sp, #48]
+    stp x25, x26, [sp, #64]
+    sub sp, sp, #1024
+    mov x25, x0
+    mov x26, x1
+    bl Lcur_tab
+    cbz x0, 9f
+    mov x19, x0
+    bl Lunzoom
+    ldr x20, [x19, #TAB_FOCUS]
+    ldr x9, [x20, #P_KIND]
+    cmp x9, #PK_TERMINAL
+    b.eq 3f
+    cbnz x26, 3f
+    // same doc, same spot
+    ldr x0, [x20, #P_DOC]
+    bl _av_editor_create
+    mov x21, x0
+    bl _av_editor_state
+    mov x22, x0
+    ldr x9, [x20, #P_VIEW]
+    ldp x10, x11, [x9, #V_CUR]
+    stp x10, x11, [x22, #V_CUR]
+    ldp x10, x11, [x9, #V_SCROLLY]
+    stp x10, x11, [x22, #V_SCROLLY]
+    mov x0, #PK_EDITOR
+    mov x1, x21
+    mov x2, x22
+    ldr x3, [x20, #P_DOC]
+    bl _av_pane_leaf
+    mov x24, x0
+    b 6f
+    // the shell starts where the job runs, or in the folder of the file
+3:  mov x23, #0
+    ldr x9, [x20, #P_KIND]
+    cmp x9, #PK_TERMINAL
+    b.ne 4f
+    ldr x0, [x20, #P_VIEW]
+    mov x1, sp
+    bl _av_term_cwd
+    cbnz x0, 5f
+    mov x23, sp
+    b 5f
+4:  ldr x9, [x20, #P_DOC]
+    ldr x1, [x9, #DOC_PATH]
+    cbz x1, 5f
+    mov x0, sp
+    mov x2, #1024
+    bl _strlcpy
+    mov x0, sp
+    mov w1, #'/'
+    bl _strrchr
+    cbz x0, 41f
+    // "/file" keeps the "/"
+    mov x9, sp
+    cmp x0, x9
+    cinc x0, x0, eq
+    strb wzr, [x0]
+    mov x23, sp
+    b 5f
+    // a relative path is relative to our own directory
+41: mov w9, #'.'
+    strh w9, [sp]
+    mov x23, sp
+5:  bl _av_term_create
+    cbz x0, 8f
+    mov x21, x0
+    bl _av_term_state
+    mov x22, x0
+    mov x0, #PK_TERMINAL
+    mov x1, x21
+    mov x2, x22
+    mov x3, #0
+    bl _av_pane_leaf
+    mov x24, x0
+6:  add x0, x19, #TAB_ROOT
+    mov x1, x20
+    mov x2, x24
+    mov x3, x25
+    bl _av_pane_split
+    LDRG x0, _av_container
+    mov x2, x21
+    MSG addSubview
+    bl _av_tabs_layout
+    mov x0, x19
+    mov x1, x24
+    bl Lset_focus
+    ldr x9, [x24, #P_KIND]
+    cmp x9, #PK_TERMINAL
+    b.ne 9f
+    // laid out first, so the shell starts with the pane's size
+    mov x0, x22
+    mov x1, x23
+    bl _av_term_start
+    cbz x0, 9f
+    LDRG x0, _av_tab_cur
+    mov x1, x24
+    mov x2, #0
+    bl Lclose_leaf
+8:  bl _NSBeep
+9:  add sp, sp, #1024
+    ldp x25, x26, [sp, #64]
+    ldp x23, x24, [sp, #48]
+    ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #96
+    ret
+
+// void focus_dir(size_t dir): focus the neighbouring pane in that direction
+    .p2align 2
+Lfocus_dir:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    mov x20, x0
+    bl Lcur_tab
+    cbz x0, 9f
+    mov x19, x0
+    bl Lunzoom
+    ldr x0, [x19, #TAB_ROOT]
+    ldr x1, [x19, #TAB_FOCUS]
+    mov x2, x20
+    bl _av_pane_neighbor
+    cbz x0, 9f
+    mov x1, x0
+    mov x0, x19
+    bl Lset_focus
+9:  ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// void next_pane(void): focus the next pane in reading order, wrapping
+    .p2align 2
+Lnext_pane:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    bl Lcur_tab
+    cbz x0, 9f
+    mov x19, x0
+    ldr x0, [x19, #TAB_ROOT]
+    ldr x1, [x19, #TAB_FOCUS]
+    bl _av_pane_next
+    mov x1, x0
+    mov x0, x19
+    bl Lset_focus_any
+9:  ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// void close_pane(void): closes the focused pane, asking first
+    .p2align 2
+Lclose_pane:
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    bl Lcur_tab
+    cbz x0, 9f
+    ldr x1, [x0, #TAB_FOCUS]
+    LDRG x0, _av_tab_cur
+    mov x2, #1
+    bl Lclose_leaf
+9:  ldp x29, x30, [sp], #16
+    ret
+
+// void zoom(void): the focused pane fills the tab, or back to all panes
+    .p2align 2
+Lzoom:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x19, [sp, #16]
+    bl Lcur_tab
+    cbz x0, 9f
+    mov x19, x0
+    ldr x9, [x19, #TAB_ROOT]
+    ldr x9, [x9, #P_KIND]
+    cmp x9, #PK_ROW
+    b.lo 9f
+    ldr x9, [x19, #TAB_ZOOM]
+    cbz x9, 1f
+    mov x0, x19
+    bl Lunzoom
+    b 2f
+1:  mov x9, #1
+    str x9, [x19, #TAB_ZOOM]
+    mov x0, x19
+    ldr x1, [x19, #TAB_FOCUS]
+    bl Lunmount
+    bl _av_tabs_layout
+2:  bl Lsync_focus
+9:  ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
+    ret
+
+// void resize(size_t dir): moves the nearest divider by four columns or two lines
+    .p2align 2
+Lresize:
+    stp x29, x30, [sp, #-32]!
+    mov x29, sp
+    str x19, [sp, #16]
+    mov x19, x0
+    bl Lcur_tab
+    cbz x0, 9f
+    ldr x9, [x0, #TAB_ZOOM]
+    cbnz x9, 9f
+    ldr x0, [x0, #TAB_FOCUS]
+    LDRD d0, _av_adv
+    fmov d1, #4.0
+    fmul d2, d0, d1
+    LDRD d0, _av_line_h
+    fmov d1, #2.0
+    fmul d3, d0, d1
+    cmp x19, #DIR_UP
+    fcsel d0, d3, d2, hs
+    mov x1, x19
+    bl _av_pane_resize
+    cbz x0, 9f
+    bl _av_tabs_layout
+9:  ldr x19, [sp, #16]
+    ldp x29, x30, [sp], #32
     ret
 
 // void av_action(size_t id)
@@ -961,6 +1894,19 @@ La_table:
     b La_tab
     .endr
     b La_term
+    b La_split_r
+    b La_split_d
+    b La_split_tr
+    b La_split_td
+    .rept 4
+    b La_pane_dir
+    .endr
+    b La_next_pane
+    b La_close_pane
+    b La_zoom
+    .rept 4
+    b La_resize
+    .endr
 La_new:
     mov x0, #0
     bl _av_tab_open
@@ -1015,6 +1961,43 @@ La_tab:
     b La_out
 La_term:
     bl _av_tab_open_term
+    b La_out
+La_split_r:
+    mov x0, #PK_ROW
+    mov x1, #0
+    bl Lsplit
+    b La_out
+La_split_d:
+    mov x0, #PK_COL
+    mov x1, #0
+    bl Lsplit
+    b La_out
+La_split_tr:
+    mov x0, #PK_ROW
+    mov x1, #1
+    bl Lsplit
+    b La_out
+La_split_td:
+    mov x0, #PK_COL
+    mov x1, #1
+    bl Lsplit
+    b La_out
+La_pane_dir:
+    sub x0, x19, #A_PANE_LEFT
+    bl Lfocus_dir
+    b La_out
+La_next_pane:
+    bl Lnext_pane
+    b La_out
+La_close_pane:
+    bl Lclose_pane
+    b La_out
+La_zoom:
+    bl Lzoom
+    b La_out
+La_resize:
+    sub x0, x19, #A_RESIZE_LEFT
+    bl Lresize
 La_out:
     ldr x19, [sp, #16]
     ldp x29, x30, [sp], #32
@@ -1286,11 +2269,10 @@ Ltb_draw:
     fmov d1, d12
     bl _av_draw_text
     // close marker, a dot while there are unsaved changes
-    TAB x9, x20
-    ldr x9, [x9, #TAB_DOC]
-    cbz x9, 40f
-    ldr x9, [x9, #BUF_FLAGS]
-40: LADDR x0, Ls_close
+    TAB x0, x20
+    bl Ltab_dirty
+    mov x9, x0
+    LADDR x0, Ls_close
     ATTRS x2, T_TAB_TEXT
     tbz x9, #0, 41f
     LADDR x0, Ls_dirty

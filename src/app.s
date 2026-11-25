@@ -71,6 +71,15 @@
     CFSTRDEF tNextTab, "Next Tab"
     CFSTRDEF tPrevTab, "Previous Tab"
     CFSTRDEF tLastTab, "Last Tab"
+    CFSTRDEF tClosePane, "Close Pane"
+    CFSTRDEF tSplitRight, "Split Right"
+    CFSTRDEF tSplitDown, "Split Down"
+    CFSTRDEF tNextPane, "Next Pane"
+    CFSTRDEF tZoomPane, "Zoom Pane"
+    CFSTRDEF kShiftW, "W"
+    CFSTRDEF kD, "d"
+    CFSTRDEF kShiftD, "D"
+    CFSTRDEF kBracket, "]"
     CFSTRDEF kW, "w"
     CFSTRDEF kO, "o"
     CFSTRDEF kComma, ","
@@ -225,7 +234,8 @@ FUNC_BEGIN _av_app_init
     ACTION x21, tOpenConfig, kComma, A_OPEN_CONFIG
     SEPARATOR x21
     ACTION x21, tSave, kS, A_SAVE
-    ACTION x21, tCloseTab, kW, A_CLOSE_TAB
+    ACTION x21, tClosePane, kW, A_CLOSE_PANE
+    ACTION x21, tCloseTab, kShiftW, A_CLOSE_TAB
 
     mov x0, x20
     CFSTR x1, tEdit
@@ -297,6 +307,12 @@ FUNC_BEGIN _av_app_init
     mov x2, #(NSEventModifierFlagCommand | NSEventModifierFlagOption)
     MSG setKeyMask
     ACTION x21, tLastTab, empty, A_LAST_TAB
+
+    SEPARATOR x21
+    ACTION x21, tSplitRight, kD, A_SPLIT_RIGHT
+    ACTION x21, tSplitDown, kShiftD, A_SPLIT_DOWN
+    ACTION x21, tNextPane, kBracket, A_NEXT_PANE
+    ACTION x21, tZoomPane, empty, A_ZOOM_PANE
 
     mov x0, x19
     mov x2, x20

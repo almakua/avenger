@@ -256,6 +256,14 @@ FUNC_BEGIN _av_term_busy
 1:  mov w0, #0
     ret
 
+// int av_term_cwd(Term *t, char *buf): working directory of the foreground job, 0 on success
+FUNC_BEGIN _av_term_cwd
+    mov x2, x1
+    ldr w9, [x0, #TM_FD]
+    ldr x1, [x0, #TM_PID]
+    mov w0, w9
+    b _av_pty_cwd
+
 // void fit(Term *t): grid size from the view bounds, resizes the emulator and the pty
     .p2align 2
 Lfit:
@@ -311,17 +319,20 @@ Lfit:
     ldp x29, x30, [sp], #48
     ret
 
-// int av_term_start(Term *t): spawn the login shell sized to the view, 0 on success
+// int av_term_start(Term *t, const char *cwd): spawn the login shell sized to the view in cwd
+// (NULL for $HOME), 0 on success
 FUNC_BEGIN _av_term_start
     stp x29, x30, [sp, #-80]!
     mov x29, sp
     stp x19, x20, [sp, #16]
     mov x19, x0
+    mov x20, x1
     bl Lfit
     ldr x9, [x19, #TM_VT]
     ldp x0, x1, [x9, #VT_ROWS]
     mov x2, #0
     add x3, sp, #32
+    mov x4, x20
     bl _av_pty_spawn
     tbnz x0, #63, 8f
     str x0, [x19, #TM_PID]
@@ -887,6 +898,7 @@ Ltm_mdown:
     mov x19, x0
     mov x21, x2
     STATE x20, x19
+    bl _av_tabs_focus_view
     mov x0, x19
     mov x1, x21
     bl Ltm_hit
@@ -1273,6 +1285,14 @@ Lkey_rgba:
     ret
 1:  b _av_rgb555_rgba
 
+// fill d0..d3 with the cursor color in drawRect, context in x21
+.macro CURSOR_FILL
+    mov x0, x21
+    LADDR x1, _av_theme
+    add x1, x1, #T_CURSOR
+    bl _av_fill
+.endm
+
 // drawRect:, per row: background runs, selection, then text runs of one color
 // x19 self, x20 term, x21 ctx, x22 vt, x23 row, x24 line, x25 run start, x26 column, x27 key,
 // x28 text out; d8 W, d9 H, d10 line h, d11 advance, d12 row bottom, d13 padding,
@@ -1520,14 +1540,40 @@ Ltd_cursor:
     fmul d15, d15, d10
     fsub d15, d9, d15
     fsub d15, d15, d13
-    mov x0, x21
-    LADDR x1, _av_theme
-    add x1, x1, #T_CURSOR
+    LDRG x9, _av_focus_view
+    cmp x9, x19
+    b.eq 1f
+    // pane without focus: outline only
+    fmov d0, d14
+    fmov d1, d15
+    fmov d2, #1.0
+    fmov d3, d10
+    CURSOR_FILL
+    fadd d0, d14, d11
+    fmov d1, #1.0
+    fsub d0, d0, d1
+    fmov d1, d15
+    fmov d2, #1.0
+    fmov d3, d10
+    CURSOR_FILL
     fmov d0, d14
     fmov d1, d15
     fmov d2, d11
+    fmov d3, #1.0
+    CURSOR_FILL
+    fadd d1, d15, d10
+    fmov d0, #1.0
+    fsub d1, d1, d0
+    fmov d0, d14
+    fmov d2, d11
+    fmov d3, #1.0
+    CURSOR_FILL
+    b Ltd_out
+1:  fmov d0, d14
+    fmov d1, d15
+    fmov d2, d11
     fmov d3, d10
-    bl _av_fill
+    CURSOR_FILL
     mov x0, x22
     mov x1, x24
     bl _av_vt_line

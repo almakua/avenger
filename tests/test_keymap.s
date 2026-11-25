@@ -92,9 +92,15 @@ FUNC_BEGIN _main
     LOOKUP 33, MOD_SHIFT, ',', A_OPEN_CONFIG
     LOOKUP 34, MOD_CTRL, 'c', 0
     LOOKUP 35, 0, '9', A_TAB_9
-    LOOKUP 36, 0, 'z', 0
+    LOOKUP 36, 0, 'z', A_ZOOM_PANE
     LOOKUP 37, 0, 't', A_NEW_TERM
     LOOKUP 38, MOD_SHIFT, 'T', A_NEXT_THEME
+    LOOKUP 39, MOD_SHIFT, '%', A_SPLIT_RIGHT
+    LOOKUP 48, 0, KEY_LEFT_CP, A_PANE_LEFT
+    LOOKUP 49, MOD_OPT, KEY_DOWN_CP, A_RESIZE_DOWN
+    LOOKUP 50, MOD_CTRL, KEY_DOWN_CP, 0
+    LOOKUP 51, 0, 'x', A_CLOSE_PANE
+    LOOKUP 52, 0, '&', A_CLOSE_TAB
 
     // overrides from YAML, custom prefix
     LADDR x0, Lkeys
@@ -111,7 +117,7 @@ FUNC_BEGIN _main
     LOOKUP 41, 0, 't', A_NEW_TAB
     LOOKUP 42, 0, 'c', 0
     LOOKUP 43, MOD_CTRL, 'w', A_CLOSE_TAB
-    LOOKUP 44, 0, 'x', 0
+    LOOKUP 44, 0, '&', 0
     LOOKUP 45, 0, 'l', 0
     // an invalid key keeps the default binding
     LOOKUP 46, 0, 's', A_SAVE

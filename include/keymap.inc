@@ -13,7 +13,22 @@
 .set A_TAB_1,       10
 .set A_TAB_9,       18
 .set A_NEW_TERM,    19
-.set A_COUNT,       20
+.set A_SPLIT_RIGHT,      20
+.set A_SPLIT_DOWN,       21
+.set A_SPLIT_TERM_RIGHT, 22
+.set A_SPLIT_TERM_DOWN,  23
+.set A_PANE_LEFT,   24     // pane_left..pane_down and resize_* follow DIR_* order
+.set A_PANE_RIGHT,  25
+.set A_PANE_UP,     26
+.set A_PANE_DOWN,   27
+.set A_NEXT_PANE,   28
+.set A_CLOSE_PANE,  29
+.set A_ZOOM_PANE,   30
+.set A_RESIZE_LEFT,  31
+.set A_RESIZE_RIGHT, 32
+.set A_RESIZE_UP,    33
+.set A_RESIZE_DOWN,  34
+.set A_COUNT,       35
 
 // key binding after the prefix: [mods u32][codepoint u32][action u32][pad]
 .set KM_MODS,   0

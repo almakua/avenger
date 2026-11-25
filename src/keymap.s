@@ -24,6 +24,21 @@ La_tab_7:       .asciz "tab_7"
 La_tab_8:       .asciz "tab_8"
 La_tab_9:       .asciz "tab_9"
 La_new_term:    .asciz "new_terminal"
+La_split_r:     .asciz "split_right"
+La_split_d:     .asciz "split_down"
+La_split_tr:    .asciz "split_terminal_right"
+La_split_td:    .asciz "split_terminal_down"
+La_pane_l:      .asciz "pane_left"
+La_pane_r:      .asciz "pane_right"
+La_pane_u:      .asciz "pane_up"
+La_pane_d:      .asciz "pane_down"
+La_next_pane:   .asciz "next_pane"
+La_close_pane:  .asciz "close_pane"
+La_zoom_pane:   .asciz "zoom_pane"
+La_resize_l:    .asciz "resize_left"
+La_resize_r:    .asciz "resize_right"
+La_resize_u:    .asciz "resize_up"
+La_resize_d:    .asciz "resize_down"
 
 Lk_space:    .asciz "space"
 Lk_tab:      .asciz "tab"
@@ -54,6 +69,9 @@ Laction_names:
     .quad La_open, La_open_config, La_save, La_next_theme
     .quad La_tab_1, La_tab_2, La_tab_3, La_tab_4, La_tab_5, La_tab_6, La_tab_7, La_tab_8, La_tab_9
     .quad La_new_term
+    .quad La_split_r, La_split_d, La_split_tr, La_split_td
+    .quad La_pane_l, La_pane_r, La_pane_u, La_pane_d, La_next_pane, La_close_pane, La_zoom_pane
+    .quad La_resize_l, La_resize_r, La_resize_u, La_resize_d
 Lkey_names:
     .quad Lk_space, ' ', Lk_tab, 9, Lk_enter, 13, Lk_return, 13, Lk_esc, 27, Lk_escape, 27
     .quad Lk_bs, 127, Lk_left, KEY_LEFT_CP, Lk_right, KEY_RIGHT_CP, Lk_up, KEY_UP_CP
@@ -66,11 +84,11 @@ Lkey_names_end:
     .p2align 2
 Ldefaults:
     .long 0, 'c', A_NEW_TAB, 0
-    .long 0, 'x', A_CLOSE_TAB, 0
+    .long 0, '&', A_CLOSE_TAB, 0
     .long 0, 'n', A_NEXT_TAB, 0
     .long 0, 'p', A_PREV_TAB, 0
     .long 0, 'l', A_LAST_TAB, 0
-    .long 0, 'o', A_OPEN, 0
+    .long 0, 'f', A_OPEN, 0
     .long 0, ',', A_OPEN_CONFIG, 0
     .long 0, 's', A_SAVE, 0
     .long 0, 't', A_NEW_TERM, 0
@@ -84,6 +102,21 @@ Ldefaults:
     .long 0, '7', A_TAB_1 + 6, 0
     .long 0, '8', A_TAB_1 + 7, 0
     .long 0, '9', A_TAB_1 + 8, 0
+    .long 0, '%', A_SPLIT_RIGHT, 0
+    .long 0, '"', A_SPLIT_DOWN, 0
+    .long 0, '|', A_SPLIT_TERM_RIGHT, 0
+    .long 0, '-', A_SPLIT_TERM_DOWN, 0
+    .long 0, KEY_LEFT_CP, A_PANE_LEFT, 0
+    .long 0, KEY_RIGHT_CP, A_PANE_RIGHT, 0
+    .long 0, KEY_UP_CP, A_PANE_UP, 0
+    .long 0, KEY_DOWN_CP, A_PANE_DOWN, 0
+    .long 0, 'o', A_NEXT_PANE, 0
+    .long 0, 'x', A_CLOSE_PANE, 0
+    .long 0, 'z', A_ZOOM_PANE, 0
+    .long MOD_OPT, KEY_LEFT_CP, A_RESIZE_LEFT, 0
+    .long MOD_OPT, KEY_RIGHT_CP, A_RESIZE_RIGHT, 0
+    .long MOD_OPT, KEY_UP_CP, A_RESIZE_UP, 0
+    .long MOD_OPT, KEY_DOWN_CP, A_RESIZE_DOWN, 0
 Ldefaults_end:
 
     .zerofill __DATA,__bss,_av_keymap,(KM_MAX * KM_SIZE),4

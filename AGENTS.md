@@ -5,9 +5,9 @@ AArch64 assembly. Read this first, then the module you are about to touch.
 
 ## Goals
 
-- lightweight and fast: small binary (~132 KB today), instant startup, no runtime deps
+- lightweight and fast: small binary (~146 KB today), instant startup, no runtime deps
   beyond AppKit/CoreText/libSystem
-- native AppKit GUI plus tmux-style tabs/splits driven by a prefix key (default `C-s`)
+- native AppKit GUI plus tmux-style tabs and panes driven by a prefix key (default `C-s`)
 - themes (Catppuccin Mocha default), syntax highlighting, YAML as config format and as a
   first-class edited language
 - repo stays local for now (the GitLab project is created by hand later), no CI
@@ -56,7 +56,8 @@ Dev hooks (no screen-recording rights needed for visual checks):
 - variadic C calls (`printf`, `dprintf`, `open` with mode) pass varargs on the stack;
   non-variadic stack args (e.g. NSEvent `isARepeat`/`keyCode`) use natural alignment
 - runtime classes are built with `objc_allocateClassPair` + `class_addMethod`
-  (AvAppDelegate, AvEditorView/AvTermView with an `st` ivar holding their state, AvTabBar)
+  (AvAppDelegate, AvEditorView/AvTermView with an `st` ivar holding their state, AvTabBar,
+  AvPanes: the flipped content view that lays out panes and drags dividers)
 - memory: `av_pages_*` (mmap) for growable blocks, `av_arena_alloc` for small long-lived
   objects (never freed)
 - pitfalls already hit: a macro whose destination register aliases its index register
@@ -70,7 +71,8 @@ Dev hooks (no screen-recording rights needed for visual checks):
 | `main.s` | startup: app, render, editor class, config, window, one tab per argv, dev hooks |
 | `app.s` | NSApplication, delegate (actions, quit/close confirmation, reload on activate), menus |
 | `window.s` | window, theme styling, `av_theme_apply`, `av_config_apply`, reload-if-changed |
-| `tabs.s` | tab model (editor or terminal), container view, tab bar view, `av_action` dispatch, prefix handling, open/save panels, alerts, Open Config with embedded template |
+| `tabs.s` | tab model (a pane tree per tab, focus, zoom), AvPanes container (layout, divider hit/drag, cursor rects), tab bar view, `av_action` dispatch, prefix handling, open/save panels, alerts, Open Config with embedded template |
+| `pane.s` | pane tree: leaves and row/column splits, layout into rects, directional neighbour, next leaf, resize/drag ratios, divider hits, node free list |
 | `termview.s` | AvTermView: pty read source (CFFileDescriptor), cell drawing, keys to xterm sequences, scrollback view, selection, copy/paste |
 | `editorview.s` | AvEditorView: keys, mouse, scroll, clipboard, undo/redo hooks |
 | `render.s` | font metrics, drawRect (gutter, current line, selection, color runs, cursor), `av_fill`, `av_draw_text` |
@@ -78,7 +80,7 @@ Dev hooks (no screen-recording rights needed for visual checks):
 | `alloc.s` | page and arena allocators |
 | `buffer.s` | gap buffer, incremental line index, NEON newline scan, UTF-8 stepping |
 | `file.s` | single-read load, atomic save (temp + rename, keeps mode) |
-| `doc.s` | Doc = buffer + undo log (merged typing/deleting, joined steps) + highlight hooks |
+| `doc.s` | Doc = buffer + undo log (merged typing/deleting, joined steps) + highlight hooks; attached Views are shifted on every edit so split panes keep their cursors |
 | `edit.s` | View ops: insert/delete/newline+autoindent/soft tab, moves, selections, columns, `_av_tab_width` |
 | `theme.s` | 4 Catppuccin palettes, 32 color roles, YAML themes (base/palette/colors), names |
 | `yaml.s` | YAML subset parser (block/flow, quoted/plain multi-line, block scalars, multi-doc, anchors/tags), errors with line numbers, accessors |
@@ -86,17 +88,18 @@ Dev hooks (no screen-recording rights needed for visual checks):
 | `hl.s` | lexers (generic table-driven for C/JSON/shell/Python, dedicated YAML/asm/Markdown), per-line state cache, language detection |
 | `keymap.s` | key spec parser (`C-s`, `M-x`, `D-t`, names), prefix bindings table, action names |
 | `vt.s` | terminal emulator: VT100/xterm subset parser, row-pointer grids (main/alt), scrollback ring recycling rows, replies (DA/DSR) |
-| `pty.s` | forkpty + login shell (env prepared before fork), resize, write with backpressure, busy check, reaping |
+| `pty.s` | forkpty + login shell in a given directory (env prepared before fork), resize, write with backpressure, busy check, foreground job cwd, reaping |
 
 Core modules (no AppKit, linked into tests): alloc buffer file doc edit theme yaml
-config hl keymap vt pty. Tests live in `tests/test_*.s` using `tests/harness.inc`.
+config hl keymap vt pty pane. Tests live in `tests/test_*.s` using `tests/harness.inc`.
 
 Key data layouts: `include/buffer.inc` (Buffer), `include/doc.inc` (Doc, View, undo
 record, move commands), `include/theme.inc` (color slots), `include/yaml.inc` (nodes,
 errors), `include/hl.inc` (languages, runs), `include/keymap.inc` (actions, modifiers),
-`include/vt.inc` (Vt header, modes, cell bits and color encoding).
+`include/vt.inc` (Vt header, modes, cell bits and color encoding), `include/pane.inc` (pane
+nodes, kinds, directions).
 
-## Done (steps 1-8)
+## Done (steps 1-9)
 
 1. scaffold: Makefile, Info.plist, objc macros, themed empty window
 2. allocators, gap buffer with line index, file load/atomic save, test harness
@@ -111,15 +114,17 @@ errors), `include/hl.inc` (languages, runs), `include/keymap.inc` (actions, modi
    as rgb555, scroll regions, alt screen 47/1047/1049, DEC line drawing, OSC titles,
    bracketed paste, DA/DSR replies), `pty.s` login shell, AvTermView with scrollback
    (3000 lines), selection and copy/paste; 16 `ansi_*` theme roles; prefix `t` / ⇧⌘T
+9. panes: `pane.s` tree per tab, splits (`%` `"` same content, `|` `-` terminal), focus by
+   direction/next/click, zoom, resize by keys or divider drag; editor splits share the Doc
+   (views attached to it), terminal splits start in the job's or the file's directory
 
-Verified numbers: 457 unit checks passing (nvim, zsh with plugins and ls colors render
+Verified numbers: 525 unit checks passing (nvim, zsh with plugins and ls colors render
 correctly in a terminal tab); 100 MB YAML opens and draws in ~0.14 s; full
 highlight state for 1.5M lines in ~79 ms; parser run on ~3000 real YAML files with no
 crashes (remaining failures are Helm/Jinja templates or genuinely invalid files).
 
 ## Next steps
 
-9. pane splits (binary pane tree, focus, resize, zoom) for editors and terminals
 10. command palette (all actions by name via `av_action_name`) + find/replace
 11. YAML editing extras: inline validation markers from `yaml.s` errors (skip Helm/Jinja
     templates), indent guides (`T_INDENT`), outline panel jumping via `N_LINE`
@@ -134,7 +139,8 @@ crashes (remaining failures are Helm/Jinja templates or genuinely invalid files)
 - no cursor blink; undo back to the saved state keeps the dirty flag
 - theme picked from the menu is session-only (persist it in config.yaml)
 - config errors are reported on stderr plus a beep on reload, not yet in the UI
-- tabs cannot be reordered by dragging
+- tabs cannot be reordered by dragging; panes cannot be swapped or moved to another tab
+- prefix bindings do not repeat (tmux `-r`), each resize step needs the prefix again
 - terminal: no mouse reporting (1000/1006), no bold/italic font faces (bold brightens
   colors 0..7), wide glyphs take one cell, no reflow on resize, tab stops fixed at 8,
   shell is always the login shell (no `shell:` option yet), cursor does not change

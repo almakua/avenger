@@ -162,7 +162,7 @@ FUNC_BEGIN _av_editor_class_init
     ldp x29, x30, [sp], #48
     ret
 
-// NSView *av_editor_create(Doc *doc)
+// NSView *av_editor_create(Doc *doc): the new View is attached to doc, detach it on close
 FUNC_BEGIN _av_editor_create
     stp x29, x30, [sp, #-48]!
     mov x29, sp
@@ -186,6 +186,9 @@ FUNC_BEGIN _av_editor_create
     LDRG x9, _av_ev_ivar
     str x20, [x21, x9]
     str x21, [x20, #V_NSVIEW]
+    mov x0, x19
+    mov x1, x20
+    bl _av_doc_attach
     mov x0, x21
     ldr x21, [sp, #32]
     ldp x19, x20, [sp, #16]
@@ -197,25 +200,39 @@ Lyes:
     mov w0, #1
     ret
 
-// redraw and sync the window's edited dot with the buffer dirty flag
+// redraw this and the other panes showing the doc, sync the window's edited dot
     .p2align 2
 Lrefresh:
     stp x29, x30, [sp, #-32]!
     mov x29, sp
-    str x19, [sp, #16]
+    stp x19, x20, [sp, #16]
     mov x19, x0
     mov x2, #1
     MSG setNeedsDisplay
-    mov x0, x19
+    STATE x20, x19
+    ldr x20, [x20, #V_DOC]
+    ldr x20, [x20, #DOC_VIEWS]
+1:  cbz x20, 2f
+    ldr x0, [x20, #V_NSVIEW]
+    cmp x0, x19
+    b.eq 11f
+    mov x0, x20
+    bl Lclamp
+    ldr x0, [x20, #V_NSVIEW]
+    mov x2, #1
+    MSG setNeedsDisplay
+11: ldr x20, [x20, #V_NEXT]
+    b 1b
+2:  mov x0, x19
     MSG window
-    cbz x0, 1f
+    cbz x0, 3f
     STATE x10, x19
     ldr x10, [x10, #V_DOC]
     ldr x11, [x10, #BUF_FLAGS]
     and x2, x11, #BUF_DIRTY
     MSG setDocumentEdited
-1:  bl _av_tabbar_redraw
-    ldr x19, [sp, #16]
+3:  bl _av_tabbar_redraw
+    ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
 
@@ -569,6 +586,8 @@ Lmouse_down:
     mov x19, x0
     mov x21, x2
     STATE x20, x19
+    bl _av_tabs_focus_view
+    mov x0, x19
     mov x1, x21
     bl Lhit
     mov x22, x0

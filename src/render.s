@@ -529,6 +529,10 @@ Lnum:
     b Lnum
 
 Lnum_end:
+    // only the focused pane shows its cursor
+    LDRG x9, _av_focus_view
+    cmp x9, x19
+    b.ne Lout
     cmp x25, x28
     b.lo Lout
     ldr x9, [sp, #L_LAST]
