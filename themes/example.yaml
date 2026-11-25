@@ -1,0 +1,27 @@
+# Example theme: copy to ~/.config/avenger/themes/<name>.yaml and set `theme: <name>`
+#
+# base     built-in flavor the theme starts from: mocha, macchiato, frappe, latte
+# palette  overrides of the 26 Catppuccin palette colors, by name
+# colors   overrides of single roles, either "#rrggbb", "#rrggbbaa" or a palette color name
+#
+# palette names: rosewater flamingo pink mauve red maroon peach yellow green teal sky
+#   sapphire blue lavender text subtext1 subtext0 overlay2 overlay1 overlay0
+#   surface2 surface1 surface0 base mantle crust
+#
+# roles: background gutter current_line selection line_number line_number_active text
+#   cursor tab_bar tab_active tab_text tab_text_active accent indent_guide error warning
+#   keyword string number comment type function operator punctuation constant key
+#   label special escape tag heading link
+
+base: mocha
+
+palette:
+  base: "#16161f"
+  mantle: "#111118"
+
+colors:
+  cursor: peach
+  line_number_active: peach
+  selection: "#f5c2e740"
+  keyword: pink
+  key: lavender

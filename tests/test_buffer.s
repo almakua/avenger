@@ -2,31 +2,11 @@
 
 .include "macros.inc"
 .include "buffer.inc"
-
-// x0 holds the actual value
-.macro CHECK id, expected
-    ldr x1, =\expected
-    mov x2, #\id
-    bl Lcheck
-.endm
-
-.macro CALL0 fn, buf
-    LADDR x0, \buf
-    bl \fn
-.endm
-
-.macro CALL1 fn, buf, a
-    LADDR x0, \buf
-    ldr x1, =\a
-    bl \fn
-.endm
+.include "harness.inc"
 
     .zerofill __DATA,__bss,_tbuf,BUF_SIZE,4
     .zerofill __DATA,__bss,_tbuf2,BUF_SIZE,4
     .zerofill __DATA,__bss,_tbuf3,BUF_SIZE,4
-    .zerofill __DATA,__bss,_tscratch,64,4
-    .zerofill __DATA,__bss,_tchecks,8,3
-    .zerofill __DATA,__bss,_tfails,8,3
 
     .section __TEXT,__cstring,cstring_literals
 Ls_hw:     .asciz "hello\nworld"
@@ -36,9 +16,6 @@ Ls_z:      .asciz "Z\n"
 Ls_exp:    .asciz "hellorld"
 Ls_utf8:   .asciz "a\303\251\342\202\254b"
 Ls_path:   .asciz "build/test.tmp"
-Ls_fail:   .asciz "FAIL #%ld: got %ld want %ld\n"
-Ls_ok:     .asciz "ok: %ld checks\n"
-Ls_bad:    .asciz "%ld/%ld checks failed\n"
 
     .text
 FUNC_BEGIN _main
@@ -214,45 +191,7 @@ FUNC_BEGIN _main
     LADDR x0, Ls_path
     bl _unlink
 
-    // summary
-    sub sp, sp, #16
-    LDRG x19, _tfails
-    LDRG x20, _tchecks
-    cbnz x19, 2f
-    str x20, [sp]
-    LADDR x0, Ls_ok
-    bl _printf
-    mov w0, #0
-    b 3f
-2:  stp x19, x20, [sp]
-    LADDR x0, Ls_bad
-    bl _printf
-    mov w0, #1
-3:  add sp, sp, #16
+    bl Lsummary
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #32
-    ret
-
-// check(actual, expected, id)
-    .p2align 2
-Lcheck:
-    LDRG x3, _tchecks
-    add x3, x3, #1
-    STRG x3, _tchecks, x4
-    cmp x0, x1
-    b.ne 1f
-    ret
-1:  stp x29, x30, [sp, #-48]!
-    mov x29, sp
-    LDRG x3, _tfails
-    add x3, x3, #1
-    STRG x3, _tfails, x4
-    // printf varargs go on the stack: id, got, want
-    sub sp, sp, #32
-    str x2, [sp]
-    stp x0, x1, [sp, #8]
-    LADDR x0, Ls_fail
-    bl _printf
-    add sp, sp, #32
-    ldp x29, x30, [sp], #48
     ret

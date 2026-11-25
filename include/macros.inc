@@ -18,9 +18,15 @@
     str \reg, [\tmp, \sym@PAGEOFF]
 .endm
 
-// frame with callee-saved x19..x28 pairs; size must be a multiple of 16
+// exported, 4-byte aligned function label
 .macro FUNC_BEGIN name
     .globl \name
     .p2align 2
 \name:
+.endm
+
+// load double stored at sym, clobbers x16
+.macro LDRD dreg, sym
+    adrp x16, \sym@PAGE
+    ldr \dreg, [x16, \sym@PAGEOFF]
 .endm

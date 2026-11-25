@@ -69,3 +69,9 @@ Lcf_\label:
     ldr \reg, [\reg, \sym@GOTPAGEOFF]
     ldr \reg, [\reg]
 .endm
+
+// address of an exported global (e.g. a callbacks struct) via GOT
+.macro LGOT reg, sym
+    adrp \reg, \sym@GOTPAGE
+    ldr \reg, [\reg, \sym@GOTPAGEOFF]
+.endm

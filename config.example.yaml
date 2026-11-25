@@ -1,0 +1,20 @@
+# Avenger configuration
+# copy to ~/.config/avenger/config.yaml (or $AVENGER_CONFIG_DIR/config.yaml)
+# changes are picked up when you save the file from Avenger or switch back to the app
+
+# any installed font; monospaced fonts work best
+font: Menlo
+font_size: 14
+
+# built-in: mocha (default), macchiato, frappe, latte ("catppuccin-" prefix optional)
+# anything else loads ~/.config/avenger/themes/<name>.yaml
+theme: mocha
+
+# spaces per tab stop, also used by the Tab key (1..16)
+tab_width: 4
+
+# tmux-style prefix key for tabs and splits
+prefix: C-b
+
+# key bindings, overrides on top of the defaults
+keys: {}

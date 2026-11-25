@@ -7,7 +7,7 @@ EXE      := $(BUNDLE)/Contents/MacOS/$(BIN)
 
 CC       := clang
 ARCH     := -arch arm64 -mmacosx-version-min=13.0
-ASFLAGS  := $(ARCH) -I include
+ASFLAGS  := $(ARCH) -I include -I tests
 LDFLAGS  := $(ARCH) -framework AppKit -framework CoreText -framework CoreGraphics \
             -lobjc -Wl,-dead_strip -Wl,-x
 
@@ -16,11 +16,11 @@ OBJS     := $(patsubst src/%.s,$(OBJDIR)/%.o,$(SRCS))
 INCS     := $(wildcard include/*.inc)
 
 # core modules have no AppKit dependency and link into CLI test binaries
-CORE     := alloc buffer file
+CORE     := alloc buffer file doc edit theme yaml config
 CORE_OBJS := $(patsubst %,$(OBJDIR)/%.o,$(CORE))
 TESTS    := $(patsubst tests/%.s,$(BUILD)/%,$(wildcard tests/test_*.s))
 
-.PHONY: all run clean size test
+.PHONY: all run clean size test yamlcheck
 
 all: $(EXE) $(BUNDLE)/Contents/Info.plist
 	@codesign -s - --force $(BUNDLE) 2>/dev/null
@@ -38,7 +38,7 @@ $(BUNDLE)/Contents/Info.plist: Info.plist | $(BUNDLE)/Contents/MacOS
 $(OBJDIR) $(BUNDLE)/Contents/MacOS:
 	mkdir -p $@
 
-$(BUILD)/test_%: tests/test_%.s $(CORE_OBJS) $(INCS)
+$(BUILD)/test_%: tests/test_%.s tests/harness.inc $(CORE_OBJS) $(INCS)
 	$(CC) $(ASFLAGS) $< $(CORE_OBJS) -o $@
 
 test: $(TESTS)
@@ -53,3 +53,8 @@ size: all
 
 clean:
 	rm -rf $(BUILD)
+
+$(BUILD)/yamlcheck: tools/yamlcheck.s $(CORE_OBJS) $(INCS)
+	$(CC) $(ASFLAGS) $< $(CORE_OBJS) -o $@
+
+yamlcheck: $(BUILD)/yamlcheck

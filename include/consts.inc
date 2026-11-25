@@ -5,7 +5,7 @@
 .set NSWindowStyleMaskMiniaturizable,  4
 .set NSWindowStyleMaskResizable,       8
 .set NSWindowStyleMaskFullSizeContent, 0x8000
-.set AV_WINDOW_STYLE, 0x800f
+.set AV_WINDOW_STYLE, 0xf
 
 .set NSBackingStoreBuffered, 2
 .set NSApplicationActivationPolicyRegular, 0

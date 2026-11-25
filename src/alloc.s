@@ -65,3 +65,28 @@ FUNC_BEGIN _av_arena_alloc
 3:  ldr x19, [sp, #16]
     ldp x29, x30, [sp], #32
     ret
+
+// void *av_pages_grow(void *p, size_t used, size_t old_size, size_t new_size), NULL keeps p
+FUNC_BEGIN _av_pages_grow
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    stp x21, x22, [sp, #32]
+    mov x19, x0
+    mov x20, x1
+    mov x21, x2
+    mov x0, x3
+    bl _av_pages_alloc
+    cbz x0, 1f
+    mov x22, x0
+    mov x1, x19
+    mov x2, x20
+    bl _memcpy
+    mov x0, x19
+    mov x1, x21
+    bl _av_pages_free
+    mov x0, x22
+1:  ldp x21, x22, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
