@@ -70,6 +70,13 @@ Lfont_warn:
     .zerofill __DATA,__bss,_av_gdepth,8,3
     .zerofill __DATA,__bss,_av_rctx,8,3
     .zerofill __DATA,__bss,_av_lcache,(LC_SLOTS * LC_SIZE),4
+    // cursor cell of the focused editor, for input method candidate windows
+    .zerofill __DATA,__bss,_av_cur_view,8,3
+    .zerofill __DATA,__bss,_av_cur_x,8,3
+    .zerofill __DATA,__bss,_av_cur_y,8,3
+    .globl _av_cur_view
+    .globl _av_cur_x
+    .globl _av_cur_y
     .globl _av_attrs
     .globl _av_font
     .globl _av_line_h
@@ -666,6 +673,62 @@ Lerror_line:
     ldp x29, x30, [sp], #64
     ret
 
+// double marked(double x, double y): draws the marked text in the cursor cell at (x, y),
+// returns the x after it; reads x21 d14
+    .p2align 2
+Lmarked:
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp d8, d9, [sp, #16]
+    str d10, [sp, #32]
+    fmov d8, d0
+    fmov d9, d1
+    // columns: one per UTF-8 lead byte
+    LADDR x9, _av_mk_text
+    LDRG x10, _av_mk_len
+    mov x11, #0
+    mov x12, #0
+1:  cmp x11, x10
+    b.hs 2f
+    ldrb w13, [x9, x11]
+    add x11, x11, #1
+    and w13, w13, #0xc0
+    cmp w13, #0x80
+    cinc x12, x12, ne
+    b 1b
+2:  ucvtf d10, x12
+    fmul d10, d10, d14
+    mov x0, x21
+    LADDR x1, _av_theme
+    add x1, x1, #T_SEL
+    fmov d0, d8
+    fmov d1, d9
+    fmov d2, d10
+    LDRD d3, _av_line_h
+    bl _av_fill
+    mov x0, x21
+    LADDR x1, _av_mk_text
+    LDRG x2, _av_mk_len
+    ATTRS x3, T_TEXT
+    fmov d0, d8
+    LDRD d1, _av_base_off
+    fadd d1, d1, d9
+    bl _av_draw_text
+    mov x0, x21
+    LADDR x1, _av_theme
+    add x1, x1, #T_ACCENT
+    fmov d0, d8
+    fmov d1, #1.0
+    fadd d1, d1, d9
+    fmov d2, d10
+    fmov d3, #1.0
+    bl _av_fill
+    fadd d0, d8, d10
+    ldr d10, [sp, #32]
+    ldp d8, d9, [sp, #16]
+    ldp x29, x30, [sp], #48
+    ret
+
 // void drawRect:(NSRect)dirty, IMP of AvEditorView
 // lines wrap into visual rows; the scroll offset is a line index plus a fraction of its rows
 // x19 self, x20 view, x21 ctx, x22 doc, x23 line, x24 nlines, x25 cursor line
@@ -1047,6 +1110,23 @@ Lrows_end:
     ldr d0, [sp, #L_CURX]
     fcmp d0, d15
     b.lt Lout
+    STRG x19, _av_cur_view, x9
+    adrp x9, _av_cur_x@PAGE
+    str d0, [x9, _av_cur_x@PAGEOFF]
+    ldr d1, [sp, #L_CURY]
+    adrp x9, _av_cur_y@PAGE
+    str d1, [x9, _av_cur_y@PAGEOFF]
+    // text being composed: over the following text, underlined, the cursor after it
+    LDRG x9, _av_mk_view
+    cmp x9, x19
+    b.ne 2f
+    LDRG x9, _av_mk_len
+    cbz x9, 2f
+    ldr d0, [sp, #L_CURX]
+    ldr d1, [sp, #L_CURY]
+    bl Lmarked
+    str d0, [sp, #L_CURX]
+2:  ldr d0, [sp, #L_CURX]
     ldr d1, [sp, #L_CURY]
     fmov d4, #2.0
     fadd d1, d1, d4

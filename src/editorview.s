@@ -42,6 +42,10 @@
     SELDEF undo, "undo:"
     SELDEF redo, "redo:"
     SELDEF saveDocument, "saveDocument:"
+    SELDEF inputContext, "inputContext"
+    SELDEF handleEvent, "handleEvent:"
+    SELDEF discardMarkedText, "discardMarkedText"
+    SELDEF unmarkText, "unmarkText"
 
     SELDEF alloc, "alloc"
     SELDEF release, "release"
@@ -150,6 +154,8 @@ FUNC_BEGIN _av_editor_class_init
     add x20, x20, #24
     b 1b
 2:  mov x0, x19
+    bl _av_textinput_add
+    mov x0, x19
     bl _objc_registerClassPair
     STRG x19, _av_ev_class, x9
     mov x0, x19
@@ -642,6 +648,10 @@ Lkey_down:
     mov x19, x0
     mov x21, x2
     STATE x20, x19
+    // while composing, the input method gets every key (arrows pick candidates)
+    mov x0, x19
+    bl _av_textinput_composing
+    cbnz w0, Lk_ime
     mov x0, x21
     bl _av_keymap_handle
     cbnz w0, Lk_out
@@ -822,13 +832,15 @@ Lk_text:
     sub w2, w2, #0x9c
     cmp w2, #3
     b.ls Lk_out
-1:  mov x0, x23
-    bl _strlen
-    mov x2, x0
-    mov x0, x20
-    mov x1, x23
-    mov x3, #1
-    bl _av_view_insert
+    // text goes through the input method: dead keys, IMEs, the accent menu
+1:
+Lk_ime:
+    mov x0, x19
+    MSG inputContext
+    cbz x0, Lk_out
+    mov x2, x21
+    MSG handleEvent
+    b Lk_out
 
 Lk_ensure:
     mov x0, x19
@@ -845,6 +857,16 @@ Lmouse_down:
     mov x19, x0
     mov x21, x2
     STATE x20, x19
+    // a click accepts what is being composed
+    mov x0, x19
+    bl _av_textinput_composing
+    cbz w0, 1f
+    mov x0, x19
+    MSG inputContext
+    MSG discardMarkedText
+    mov x0, x19
+    MSG unmarkText
+1:  mov x0, x19
     bl _av_tabs_focus_view
     mov x0, x19
     mov x1, x21

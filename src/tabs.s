@@ -86,6 +86,8 @@
     SELDEF mouseDown, "mouseDown:"
     SELDEF mouseDragged, "mouseDragged:"
     SELDEF mouseUp, "mouseUp:"
+    SELDEF otherMouseUp, "otherMouseUp:"
+    SELDEF buttonNumber, "buttonNumber"
     SELDEF isOpaque, "isOpaque"
     SELDEF isFlipped, "isFlipped"
     SELDEF hitTest, "hitTest:"
@@ -134,6 +136,7 @@ Ltb_methods:
     .quad Lsr_drawRect, Ltb_draw, Lt_rect
     .quad Lsr_mouseDown, Ltb_mouse, Lt_obj
     .quad Lsr_isOpaque, Lyes, Lt_bool
+    .quad Lsr_otherMouseUp, Ltb_other, Lt_obj
 Ltb_methods_end:
 Lpn_methods:
     .quad Lsr_isFlipped, Lyes, Lt_bool
@@ -2454,4 +2457,38 @@ Ltb_mouse:
     ldp d8, d9, [sp, #32]
     ldp x19, x20, [sp, #16]
     ldp x29, x30, [sp], #64
+    ret
+
+// otherMouseUp: on the tab bar: the middle button closes the tab under the pointer
+    .p2align 2
+Ltb_other:
+    stp x29, x30, [sp, #-48]!
+    mov x29, sp
+    stp x19, x20, [sp, #16]
+    str d8, [sp, #32]
+    mov x19, x0
+    mov x20, x2
+    mov x0, x20
+    MSG buttonNumber
+    cmp x0, #2
+    b.ne 9f
+    mov x0, x20
+    MSG locationInWindow
+    mov x0, x19
+    mov x2, #0
+    MSG convertPoint
+    fmov d8, d0
+    mov x0, x19
+    MSG bounds
+    fmov d0, d2
+    bl Ltab_width
+    fdiv d0, d8, d0
+    fcvtzu x0, d0
+    LDRG x9, _av_ntabs
+    cmp x0, x9
+    b.hs 9f
+    bl _av_tab_close
+9:  ldr d8, [sp, #32]
+    ldp x19, x20, [sp, #16]
+    ldp x29, x30, [sp], #48
     ret

@@ -43,7 +43,7 @@ Themes: the four Catppuccin flavors are built in (`mocha`, `macchiato`, `frappe`
 ## Tabs and keys
 
 Every file opens in a tab (`avenger a.yaml b.s` opens two). Tabs are driven from the
-tab bar (click, `×` to close, `+` for a new one), the menus, or the prefix key:
+tab bar (click, `×` or the middle button to close, `+` for a new one), the menus, or the prefix key:
 
 | after `Ctrl-s` | action        | menu / direct  |
 |----------------|---------------|----------------|
@@ -107,6 +107,9 @@ Long lines wrap at word boundaries to the width of their pane, so splitting or d
 a divider reflows them; up/down move by visual rows. `Ctrl-s w` turns wrapping off for
 the session (`wrap: false` in config.yaml makes it permanent). Indent guides mark the
 enclosing blocks (`indent_guides: false` hides them).
+
+Typing goes through the macOS input system: dead keys, the press-and-hold accent menu,
+Japanese/Chinese input methods, Emoji & Symbols and dictation all work in editor panes.
 
 YAML files are checked while you type (a background parse 300 ms after the last edit):
 the first error gets a red squiggle, a red line number and its message at the end of the

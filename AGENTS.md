@@ -81,6 +81,7 @@ Dev hooks (no screen-recording rights needed for visual checks):
 | `palette.s` | command palette (AvPalette: actions and tabs, fuzzy filtered, NSTextField delegate), shared themed field/color helpers |
 | `findbar.s` | find bar under the focused editor pane (AvFindBar: incremental search, next/prev, replace one/all, count), pattern shared with `render.s` for highlights |
 | `lint.s` | YAML validation while typing: debounce timer on the main queue, parse of a text copy on a global queue, first error stored in the Doc (generation checked) |
+| `textinput.s` | NSTextInputClient for AvEditorView: marked text kept outside the buffer (drawn by `render.s` at the cursor), commit with optional replacement range, UTF-16 ranges relative to the cursor line, candidate window rect |
 | `editorview.s` | AvEditorView: keys, mouse, scroll, clipboard, undo/redo hooks |
 | `render.s` | font metrics, typeset line cache (CTLines by hash of bytes and attributes, flushed with the attributes), drawRect over wrapped visual rows (gutter, current line, indent guides, selection, find matches, color runs cut at row ends, YAML error squiggle and message, cursor), `av_fill`, `av_draw_text` |
 | `snapshot.s` | dev hooks AV_SNAPSHOT / AV_TYPE / AV_BENCH |
@@ -108,7 +109,7 @@ errors), `include/hl.inc` (languages, runs), `include/keymap.inc` (actions, modi
 `include/vt.inc` (Vt header, modes, cell bits and color encoding), `include/pane.inc` (pane
 nodes, kinds, directions).
 
-## Done (steps 1-12)
+## Done (steps 1-13)
 
 1. scaffold: Makefile, Info.plist, objc macros, themed empty window
 2. allocators, gap buffer with line index, file load/atomic save, test harness
@@ -134,6 +135,9 @@ nodes, kinds, directions).
 12. performance: CTLine cache in `av_draw_text` (dense asm 1.05 to 0.72 ms per still frame,
    scrolling 0.84 to 0.48 ms), `AV_BENCH` hook, only `_main` exported (-11 KB); startup is
    ~85 ms from `main`, of which AppKit app and window setup take all but ~2 ms
+13. composed input in editors (NSTextInputClient): text keys go through `inputContext`, dead
+   keys and IMEs show marked text underlined at the cursor, the accent menu replaces the
+   previous letter, a click commits; middle click on a tab closes it
 
 Verified numbers: 592 unit checks passing; ~0.7 ms per offscreen frame of a full window
 of dense asm, an 11 MB YAML opens in ~90 ms (nvim, zsh with plugins and ls colors render
@@ -143,13 +147,14 @@ crashes (remaining failures are Helm/Jinja templates or genuinely invalid files)
 
 ## Next steps
 
-Candidates, to be agreed with the maintainer: NSTextInputClient (dead keys, IME), terminal
-mouse reporting and bold/italic faces, persisting the theme picked from the menu, config
-errors shown in the UI, dragging tabs to reorder them
+Candidates, to be agreed with the maintainer: terminal mouse reporting and bold/italic
+faces, persisting the theme picked from the menu, config errors shown in the UI, dragging
+tabs to reorder them
 
 ## Known limitations
 
-- no NSTextInputClient yet: dead keys and IME input do not compose
+- composed input works in editors only (terminals take the characters of each key as is);
+  input methods see the cursor line as their whole context
 - wide glyphs (CJK/emoji) and CRLF line endings misalign the cursor column
 - lines longer than 8 KB are truncated for display and highlighting; wrapped rows are not
   indented like their line, and indent guides cover only a line's first row
