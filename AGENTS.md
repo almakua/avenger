@@ -5,8 +5,8 @@ AArch64 assembly. Read this first, then the module you are about to touch.
 
 ## Goals
 
-- lightweight and fast: small binary (~154 KB today, __TEXT grows in 16 KB pages), instant startup, no runtime deps
-  beyond AppKit/CoreText/libSystem
+- lightweight and fast: small binary (~154 KB today, `__TEXT` grows in 16 KB pages),
+  instant startup, no runtime deps beyond AppKit/CoreText/libSystem
 - native AppKit GUI plus tmux-style tabs and panes driven by a prefix key (default `C-s`)
 - themes (Catppuccin Mocha default), syntax highlighting, YAML as config format and as a
   first-class edited language
@@ -36,9 +36,12 @@ build/Avenger.app/Contents/MacOS/avenger [files...]
 Dev hooks (no screen-recording rights needed for visual checks):
 
 - `AV_SNAPSHOT=out.png` renders the window content to a PNG after startup and exits
-- `AV_TYPE=...` sends synthetic keys to the first responder (pane, palette or find field): printable ASCII, `\n`,
-  `\b`, `0x1c..0x1f` arrows, `0x1a` undo, `0x01` select all, `0x14` next theme,
-  `0x13` Ctrl-s (prefix), `0x10` runs the run loop for 0.5 s (lets terminal output arrive)
+- `AV_TYPE=...` sends synthetic keys to the first responder (pane, palette or find field):
+  printable ASCII, `\n`, `\b`, `0x1c..0x1f` arrows, `0x1a` undo, `0x01` select all,
+  `0x14` next theme, `0x13` Ctrl-s (prefix), `0x10` runs the run loop for 0.5 s (lets
+  terminal output, deferred closes and the 300 ms YAML check happen); arrows after the
+  prefix cannot be sent (bind actions to letters in a scratch config to test them), and
+  composed input is tested by calling the NSTextInputClient methods from a temporary hook
 - `AV_BENCH=N` renders the focused pane offscreen N times still and N times scrolling one row
   per frame, then prints µs/frame and the time from `main` to the first frame on stderr
 - `AVENGER_CONFIG_DIR=dir` uses `dir/config.yaml` and `dir/themes/` instead of
@@ -64,9 +67,12 @@ Dev hooks (no screen-recording rights needed for visual checks):
   objects (never freed)
 - pitfalls already hit: a macro whose destination register aliases its index register
   (`CH w11, x11`), overwriting an argument before reading it, unsigned compares on
-  indices that may be -1 (use signed conditions), `ccmp` immediates are 0..31,
-  make skipping a rebuild when a source and its object share the same second (delete the object),
-  views not clipping to their bounds since macOS 14 (clip in drawRect)
+  indices that may be -1 (use signed conditions), `ccmp` immediates are 0..31, stack
+  scratch slots placed over the saved registers of the same frame, helpers reading the
+  caller's frame (pass values in registers instead), make skipping a rebuild when a
+  source and its object share the same second (delete the object), views not clipping
+  to their bounds since macOS 14 (clip in drawRect), removing a text field from inside
+  its own delegate callback (defer with `dispatch_async_f` on the main queue)
 
 ## Architecture
 
@@ -75,14 +81,14 @@ Dev hooks (no screen-recording rights needed for visual checks):
 | `main.s` | startup: app, render, editor class, config, window, one tab per argv, dev hooks |
 | `app.s` | NSApplication, delegate (actions, quit/close confirmation, reload on activate), menus |
 | `window.s` | window, theme styling, `av_theme_apply`, `av_config_apply`, reload-if-changed |
-| `tabs.s` | tab model (a pane tree per tab, focus, zoom), AvPanes container (layout, divider hit/drag, cursor rects), tab bar view, `av_action` dispatch, prefix handling, open/save panels, alerts, Open Config with embedded template |
+| `tabs.s` | tab model (a pane tree per tab, focus, zoom), AvPanes container (layout with the find bar slot, divider hit/drag, cursor rects), tab bar view (click, `×` or middle click closes, `+`), `av_action` dispatch, prefix handling, open/save panels, alerts, Open Config with embedded template |
 | `pane.s` | pane tree: leaves and row/column splits, layout into rects, directional neighbour, next leaf, resize/drag ratios, divider hits, node free list |
 | `termview.s` | AvTermView: pty read source (CFFileDescriptor), cell drawing, keys to xterm sequences, scrollback view, selection, copy/paste |
 | `palette.s` | command palette (AvPalette: actions and tabs, fuzzy filtered, NSTextField delegate), shared themed field/color helpers |
 | `findbar.s` | find bar under the focused editor pane (AvFindBar: incremental search, next/prev, replace one/all, count), pattern shared with `render.s` for highlights |
 | `lint.s` | YAML validation while typing: debounce timer on the main queue, parse of a text copy on a global queue, first error stored in the Doc (generation checked) |
 | `textinput.s` | NSTextInputClient for AvEditorView: marked text kept outside the buffer (drawn by `render.s` at the cursor), commit with optional replacement range, UTF-16 ranges relative to the cursor line, candidate window rect |
-| `editorview.s` | AvEditorView: keys, mouse, scroll, clipboard, undo/redo hooks |
+| `editorview.s` | AvEditorView: keys (text through `inputContext`), mouse, scroll by visual rows, cursor reveal, clipboard, undo/redo hooks, redraw of sibling panes and YAML check scheduling |
 | `render.s` | font metrics, typeset line cache (CTLines by hash of bytes and attributes, flushed with the attributes), drawRect over wrapped visual rows (gutter, current line, indent guides, selection, find matches, color runs cut at row ends, YAML error squiggle and message, cursor), `av_fill`, `av_draw_text` |
 | `snapshot.s` | dev hooks AV_SNAPSHOT / AV_TYPE / AV_BENCH |
 | `alloc.s` | page and arena allocators |
@@ -101,13 +107,14 @@ Dev hooks (no screen-recording rights needed for visual checks):
 | `pty.s` | forkpty + login shell in a given directory (env prepared before fork), resize, write with backpressure, busy check, foreground job cwd, reaping |
 
 Core modules (no AppKit, linked into tests): alloc buffer file doc edit theme yaml
-config hl keymap vt pty pane search outline. Tests live in `tests/test_*.s` using `tests/harness.inc`.
+config hl keymap vt pty pane search outline. Tests live in `tests/test_*.s` using
+`tests/harness.inc`.
 
 Key data layouts: `include/buffer.inc` (Buffer), `include/doc.inc` (Doc, View, undo
-record, move commands), `include/theme.inc` (color slots), `include/yaml.inc` (nodes,
-errors), `include/hl.inc` (languages, runs), `include/keymap.inc` (actions, modifiers),
-`include/vt.inc` (Vt header, modes, cell bits and color encoding), `include/pane.inc` (pane
-nodes, kinds, directions).
+record, move commands, generation and YAML error fields, `WRAP_MAX`), `include/theme.inc`
+(color slots), `include/yaml.inc` (nodes, errors), `include/hl.inc` (languages, runs),
+`include/keymap.inc` (actions, modifiers), `include/vt.inc` (Vt header, modes, cell bits
+and color encoding), `include/pane.inc` (pane nodes, kinds, directions).
 
 ## Done (steps 1-13)
 
@@ -127,11 +134,11 @@ nodes, kinds, directions).
 9. panes: `pane.s` tree per tab, splits (`%` `"` same content, `|` `-` terminal), focus by
    direction/next/click, zoom, resize by keys or divider drag; editor splits share the Doc
    (views attached to it), terminal splits start in the job's or the file's directory
-10. command palette (`:` / ⇧⌘P) over actions and tabs; find bar (`/` / ⌘F) with smart case,
-   highlights and count, replace (`?` / ⌥⌘F) one or all
-11. word wrap to the pane width (`wrap`, `C-s w`, scroll offset = line + fraction of its rows),
-   indent guides from enclosing blocks (`indent_guides`), YAML validation in the background with
-   squiggle and inline message, outline palette over key paths (`C-s g`)
+10. command palette (`:` / ⇧⌘P) over actions and tabs; find bar (`/` / ⌘F) with smart
+   case, highlights and count, replace (`?` / ⌥⌘F) one or all
+11. word wrap to the pane width (`wrap`, `C-s w`, scroll offset = line + fraction of its
+   rows), indent guides from enclosing blocks (`indent_guides`), YAML validation in the
+   background with squiggle and inline message, outline palette over key paths (`C-s g`)
 12. performance: CTLine cache in `av_draw_text` (dense asm 1.05 to 0.72 ms per still frame,
    scrolling 0.84 to 0.48 ms), `AV_BENCH` hook, only `_main` exported (-11 KB); startup is
    ~85 ms from `main`, of which AppKit app and window setup take all but ~2 ms
@@ -140,10 +147,12 @@ nodes, kinds, directions).
    previous letter, a click commits; middle click on a tab closes it
 
 Verified numbers: 592 unit checks passing; ~0.7 ms per offscreen frame of a full window
-of dense asm, an 11 MB YAML opens in ~90 ms (nvim, zsh with plugins and ls colors render
-correctly in a terminal tab); 100 MB YAML opens and draws in ~0.14 s; full
+of dense asm; an 11 MB YAML opens in ~90 ms and a 100 MB one draws in ~0.14 s; full
 highlight state for 1.5M lines in ~79 ms; parser run on ~3000 real YAML files with no
-crashes (remaining failures are Helm/Jinja templates or genuinely invalid files).
+crashes (remaining failures are Helm/Jinja templates or genuinely invalid files); nvim and
+zsh with plugins and ls colors render correctly in a terminal pane. Checked by hand by the
+maintainer: trackpad scrolling, divider drag (also with wrapped text), click to focus,
+palette arrows and clicks, find bar shift/option return.
 
 ## Next steps
 
@@ -160,7 +169,7 @@ tabs to reorder them
   indented like their line, and indent guides cover only a line's first row
 - YAML validation shows the parser's first error only; the outline needs a document that parses
 - no cursor blink; undo back to the saved state keeps the dirty flag
-- theme picked from the menu is session-only (persist it in config.yaml)
+- theme picked from the menu and `C-s w` are session-only (persist them in config.yaml)
 - config errors are reported on stderr plus a beep on reload, not yet in the UI
 - tabs cannot be reordered by dragging; panes cannot be swapped or moved to another tab
 - find/replace is plain text (no regex), not available in terminal scrollback; palette and
@@ -168,5 +177,5 @@ tabs to reorder them
 - prefix bindings do not repeat (tmux `-r`), each resize step needs the prefix again
 - terminal: no mouse reporting (1000/1006), no bold/italic font faces (bold brightens
   colors 0..7), wide glyphs take one cell, no reflow on resize, tab stops fixed at 8,
-  shell is always the login shell (no `shell:` option yet), cursor does not change
-  shape or show focus
+  shell is always the login shell (no `shell:` option yet), cursor shape requests
+  (DECSCUSR) are ignored
