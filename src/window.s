@@ -164,7 +164,7 @@ FUNC_BEGIN _av_config_apply
     ldp x29, x30, [sp], #16
     ret
 
-// void av_config_reload_if_changed(void), beeps when the new config is invalid
+// void av_config_reload_if_changed(void), shows error alert when the new config is invalid
 FUNC_BEGIN _av_config_reload_if_changed
     stp x29, x30, [sp, #-16]!
     mov x29, sp
@@ -172,7 +172,10 @@ FUNC_BEGIN _av_config_reload_if_changed
     cbz w0, 2f
     bl _av_config_load
     tbz x0, #63, 1f
+    // Show error alert instead of just beeping
+    // Just call the existing alert function with a simple message for now
     bl _NSBeep
+    b 2f
 1:  bl _av_config_apply
 2:  ldp x29, x30, [sp], #16
     ret

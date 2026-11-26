@@ -21,6 +21,7 @@ AArch64 assembly. Read this first, then the module you are about to touch.
 - chat with the maintainer in Italian; everything in the repo is English
 - comments: max 2 lines, lowercase start, no trailing period, only the essential why,
   sentences joined with commas or semicolons (no " - " separators)
+- after any change, always run `make test` to verify that your modifications don't break existing functionality
 
 ## Build, run, test
 
